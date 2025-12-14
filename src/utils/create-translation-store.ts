@@ -6,7 +6,9 @@ import { createTranslationModuleMap } from './create-translation-module-map';
  * @param translations - Object with translation keys
  * @param locales - Object with locale keys
  * @param loadModule - Function to load a translation module
- * @param extractTranslation - Function to extract translation data from the loaded module
+ * @param extractTranslation - Function to extract translation data from the loaded module.
+ *   Receives three parameters: (module, locale, translation) allowing for locale-specific
+ *   or translation-specific extraction logic.
  * @returns Object with a type() method for creating a typed translation store
  */
 export const createTranslationStore = <T extends Record<string, string>, L extends Record<string, string>, Module = unknown>(

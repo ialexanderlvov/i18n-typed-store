@@ -6,7 +6,7 @@ describe('createTranslationStore', () => {
 		const translations = { common: 'common' } as const;
 		const locales = { en: 'en' } as const;
 		const loadModule = vi.fn(async () => ({}));
-		const extractTranslation = vi.fn((module) => module);
+		const extractTranslation = vi.fn((module, locale, translation) => module);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 
@@ -26,7 +26,7 @@ describe('createTranslationStore', () => {
 		} as const;
 
 		const loadModule = vi.fn(async () => ({ data: 'test' }));
-		const extractTranslation = vi.fn((module) => module);
+		const extractTranslation = vi.fn((module, locale, translation) => module);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
@@ -52,7 +52,7 @@ describe('createTranslationStore', () => {
 		const loadModule = vi.fn(async (locale: string) => {
 			return { locale, data: locale === 'en' ? 'Hello' : 'Привет' };
 		});
-		const extractTranslation = vi.fn((module) => module.data);
+		const extractTranslation = vi.fn((module, locale, translation) => module.data);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
@@ -73,7 +73,7 @@ describe('createTranslationStore', () => {
 		const loadModule = vi.fn(async (locale: string) => {
 			return { locale, text: locale === 'en' ? 'Hello' : 'Привет' };
 		});
-		const extractTranslation = vi.fn((module) => module.text);
+		const extractTranslation = vi.fn((module, locale, translation) => module.text);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
@@ -104,7 +104,7 @@ describe('createTranslationStore', () => {
 				data: `${translation}-${locale}`,
 			};
 		});
-		const extractTranslation = vi.fn((module) => module.data);
+		const extractTranslation = vi.fn((module, locale, translation) => module.data);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
@@ -127,7 +127,7 @@ describe('createTranslationStore', () => {
 		const loadModule = vi.fn(async () => {
 			throw new Error('Failed to load');
 		});
-		const extractTranslation = vi.fn((module) => module);
+		const extractTranslation = vi.fn((module, locale, translation) => module);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
@@ -149,7 +149,7 @@ describe('createTranslationStore', () => {
 		};
 
 		const loadModule = vi.fn(async () => mockModule);
-		const extractTranslation = vi.fn((module) => module.default);
+		const extractTranslation = vi.fn((module, locale, translation) => module.default);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
@@ -173,7 +173,7 @@ describe('createTranslationStore', () => {
 			buttons: { save: 'Save', cancel: 'Cancel' },
 			messages: { success: 'Success!', error: 'Error!' },
 		}));
-		const extractTranslation = vi.fn((module) => module);
+		const extractTranslation = vi.fn((module, locale, translation) => module);
 
 		const storeFactory = createTranslationStore(translations, locales, loadModule, extractTranslation);
 		const store = storeFactory.type<{
