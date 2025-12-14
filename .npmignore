@@ -1,0 +1,10 @@
+coverage
+src
+node_modules
+tests
+.prettierrc
+.gitignore
+eslint.config.mts
+package-lock.json
+tsconfig.json
+tsup.config.ts
