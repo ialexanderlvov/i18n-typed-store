@@ -1,0 +1,62 @@
+{
+	"$schema": "./node_modules/nx/schemas/nx-schema.json",
+	"targetDefaults": {
+		"build": {
+			"cache": true,
+			"dependsOn": ["^build"],
+			"inputs": ["production", "^production"]
+		},
+		"lint": {
+			"cache": true,
+			"inputs": ["default", "{workspaceRoot}/eslint.config.mts"]
+		},
+		"test": {
+			"cache": true,
+			"inputs": ["default", "^production", "{workspaceRoot}/packages/*/vitest.config.ts"]
+		},
+		"test:coverage": {
+			"cache": false,
+			"inputs": ["default", "^production", "{workspaceRoot}/packages/*/vitest.config.ts"]
+		}
+	},
+	"namedInputs": {
+		"default": ["{projectRoot}/**/*", "sharedGlobals"],
+		"production": [
+			"default",
+			"!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
+			"!{projectRoot}/tsconfig.spec.json",
+			"!{projectRoot}/tsconfig.test.json",
+			"!{projectRoot}/eslint.config.mts",
+			"!{projectRoot}/vitest.config.ts",
+			"!{projectRoot}/src/test-setup.[jt]s",
+			"!{projectRoot}/test-setup.[jt]s",
+			"!{projectRoot}/tests/**/*",
+			"!{projectRoot}/**/*.stories.@(js|jsx|ts|tsx|mdx)"
+		],
+		"sharedGlobals": []
+	},
+	"plugins": [
+		{
+			"plugin": "@nx/eslint/plugin",
+			"options": {
+				"targetName": "lint"
+			}
+		}
+	],
+	"tasksRunnerOptions": {
+		"default": {
+			"runner": "nx/tasks-runners/default",
+			"options": {
+				"cacheableOperations": ["build", "lint", "test"]
+			}
+		}
+	},
+	"workspaceLayout": {
+		"appsDir": "packages",
+		"libsDir": "packages"
+	},
+	"affected": {
+		"defaultBase": "main"
+	},
+	"nxCloudId": "696782d0e7cfc050ebbce1db"
+}

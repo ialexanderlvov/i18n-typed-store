@@ -1,0 +1,48 @@
+{
+	"name": "i18n-typed-store",
+	"version": "0.2.0",
+	"description": "Type-safe translation store for managing i18n locales with full TypeScript support",
+	"main": "dist/index.js",
+	"module": "dist/index.mjs",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.mjs",
+			"require": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsup",
+		"lint": "eslint .",
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"clean": "rm -rf dist"
+	},
+	"keywords": [
+		"i18n",
+		"internationalization",
+		"localization",
+		"locale",
+		"translation",
+		"typescript",
+		"type-safe",
+		"typed",
+		"store",
+		"translations"
+	],
+	"author": "Alexander Lvov",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ialexanderlvov/i18n-typed-store.git"
+	},
+	"license": "MIT",
+	"type": "commonjs",
+	"devDependencies": {
+		"@vitest/coverage-v8": "4.0.17"
+	}
+}
