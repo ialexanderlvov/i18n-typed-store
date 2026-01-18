@@ -1,539 +1,533 @@
-# i18n-typed-store-react
+# i18n-typed-store-nest
 
-> ⚠️ **WARNING: The library API is under active development and may change significantly between versions. Use exact versions in package.json and read the changelog carefully when updating.**
+> ⚠️ **ВНИМАНИЕ: API библиотеки находится в активной разработке и может значительно изменяться от версии к версии. Используйте точные версии в package.json и внимательно читайте changelog при обновлении.**
 
-React integration for [i18n-typed-store](https://github.com/ialexanderlvov/i18n-typed-store) - a type-safe translation store for managing i18n locales with full TypeScript support. Provides React hooks, components, and SSR utilities for seamless integration with React applications.
+Type-safe translation store для NestJS с полной поддержкой TypeScript. Интеграция `i18n-typed-store` для NestJS приложений с автоматическим определением локали из запросов, декораторами для удобного доступа к переводам и поддержкой предзагрузки переводов.
 
-## Features
+## Возможности
 
-- ✅ **React Hooks** - `useI18nTranslation`, `useI18nTranslationLazy`, `useI18nLocale`
-- ✅ **React Suspense Support** - Built-in support for React Suspense with lazy loading
-- ✅ **Provider Component** - `I18nTypedStoreProvider` for providing translation context
-- ✅ **SSR/SSG Support** - Utilities for Next.js and other SSR frameworks
-- ✅ **Type-Safe** - Full TypeScript support with autocomplete and go-to definition
-- ✅ **Safe Component** - Error-safe component for accessing translations
-- ✅ **Locale Management** - Hook for accessing and changing locales with automatic updates
+- ✅ **Полная поддержка TypeScript** - Типобезопасность для переводов и локалей
+- ✅ **IDE интеграция** - Переход к определению, автодополнение с классами переводов
+- ✅ **Автоматическое определение локали** - Из query параметров, cookies, headers, route параметров
+- ✅ **Декораторы** - Удобные декораторы `@I18n()`, `@Locale()`, `@Translation()` для доступа к переводам
+- ✅ **Global Interceptor** - Автоматическая регистрация interceptor для определения локали
+- ✅ **Middleware поддержка** - Альтернатива interceptor через middleware
+- ✅ **Предзагрузка переводов** - Автоматическая предзагрузка при инициализации модуля
+- ✅ **Type-safe API** - Валидация ключей переводов и локалей на этапе компиляции
+- ✅ **Lazy loading** - Загрузка переводов только когда необходимо
+- ✅ **Fallback локали** - Автоматическое слияние с fallback переводами
 
-## Installation
+## Установка
 
 ```bash
-npm install i18n-typed-store-react
+npm install i18n-typed-store-nest i18n-typed-store
 ```
 
 ```bash
-yarn add i18n-typed-store-react
+yarn add i18n-typed-store-nest i18n-typed-store
 ```
 
 ```bash
-pnpm add i18n-typed-store-react
+pnpm add i18n-typed-store-nest i18n-typed-store
 ```
 
-## Quick Start
+## Быстрый старт
 
-### Basic Setup
+### 1. Создание translation store
 
-First, create your translation store using `i18n-typed-store`:
+Сначала создайте translation store (общий для всего проекта):
 
 ```typescript
-// store.ts
+// i18n/store.ts
 import { createTranslationStore } from 'i18n-typed-store';
 import type CommonTranslationsEn from './translations/common/en';
-import { TRANSLATIONS, LOCALES } from './constants';
+import type ErrorsTranslationsEn from './translations/errors/en';
 
-export interface ITranslationStoreTypes extends Record<keyof typeof TRANSLATIONS, any> {
+const namespaces = { common: 'common', errors: 'errors' } as const;
+const locales = { en: 'en', ru: 'ru' } as const;
+
+export interface ITranslationStoreTypes extends Record<keyof typeof namespaces, any> {
 	common: CommonTranslationsEn;
+	errors: ErrorsTranslationsEn;
 }
 
 export const store = createTranslationStore({
-	namespaces: TRANSLATIONS,
-	locales: LOCALES,
+	namespaces,
+	locales,
 	loadModule: async (locale, namespace) => {
-		return await import(`./translations/${namespace}/${locale}.tsx`);
+		return await import(`./translations/${namespace}/${locale}.ts`);
 	},
 	extractTranslation: (module) => new module.default(),
 	defaultLocale: 'en',
+	useFallback: true,
+	fallbackLocale: 'en',
 }).type<ITranslationStoreTypes>();
 ```
 
-```typescript
-// constants.ts
-export const TRANSLATIONS = {
-	common: 'common',
-} as const;
-
-export const LOCALES = {
-	en: 'en',
-	ru: 'ru',
-} as const;
-```
-
-### Wrap Your App with Provider
-
-```tsx
-// App.tsx
-import { I18nTypedStoreProvider } from 'i18n-typed-store-react';
-import { store } from './store';
-import { MyComponent } from './MyComponent';
-
-function App() {
-	return (
-		<I18nTypedStoreProvider store={store}>
-			<MyComponent />
-		</I18nTypedStoreProvider>
-	);
-}
-```
-
-### Use Translations in Components
-
-```tsx
-// MyComponent.tsx
-import { useI18nTranslation, useI18nLocale } from 'i18n-typed-store-react';
-import { TRANSLATIONS, LOCALES } from './constants';
-import type { ITranslationStoreTypes } from './store';
-
-function MyComponent() {
-	const translations = useI18nTranslation<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, 'common'>('common');
-	const { locale, setLocale } = useI18nLocale<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes>();
-
-	if (!translations) {
-		return <div>Loading...</div>;
-	}
-
-	return (
-		<div>
-			<h1>{translations.title}</h1>
-			<p>{translations.greeting}</p>
-			<button onClick={() => setLocale('ru')}>Switch to Russian</button>
-		</div>
-	);
-}
-```
-
-### Creating Typed Hook Wrappers (Recommended)
-
-For better type safety and cleaner code, create typed wrapper hooks:
+### 2. Настройка модуля
 
 ```typescript
-// hooks/useTranslation.ts
-import { useI18nTranslation } from 'i18n-typed-store-react/useI18nTranslation';
-import type { TRANSLATIONS, LOCALES } from '../constants';
-import type { ITranslationStoreTypes } from '../store';
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { I18nModule } from 'i18n-typed-store-nest';
+import { store } from './i18n/store';
 
-export const useTranslation = <K extends keyof typeof TRANSLATIONS>(translation: K) => {
-	return useI18nTranslation<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, K>(translation);
-};
+@Module({
+	imports: [
+		I18nModule.forRoot({
+			store,
+			defaultLocale: 'en',
+			availableLocales: ['en', 'ru'],
+			headerName: 'accept-language',
+			queryParamName: 'locale',
+			cookieName: 'locale',
+			parseAcceptLanguage: true,
+			// Предзагрузка всех переводов при инициализации
+			preload: true,
+		}),
+	],
+})
+export class AppModule {}
+// I18nInterceptor автоматически зарегистрирован и будет определять локаль для каждого запроса
 ```
+
+### 3. Использование декораторов
+
+Модуль автоматически определяет локаль из запроса (query параметры, cookies, headers) и устанавливает её в сервисе. Вы можете использовать декораторы для доступа к переводам:
 
 ```typescript
-// hooks/useTranslationLazy.ts
-import { useI18nTranslationLazy } from 'i18n-typed-store-react/useI18nTranslationLazy';
-import type { TRANSLATIONS, LOCALES } from '../constants';
-import type { ITranslationStoreTypes } from '../store';
+// app.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { I18n, Locale, Translation } from 'i18n-typed-store-nest';
+import type CommonTranslationsEn from './translations/common/en';
 
-export const useTranslationLazy = <K extends keyof typeof TRANSLATIONS>(translation: K) => {
-	return useI18nTranslationLazy<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, K>(translation);
-};
-```
+@Controller()
+export class AppController {
+	@Get()
+	async getData(@I18n() i18n: I18nService, @Locale() locale: string, @Translation('common') translation: CommonTranslationsEn) {
+		// Использование I18nService напрямую
+		const currentLocale = i18n.getLocale();
 
-Now you can use them with full type inference:
+		// Загрузка перевода при необходимости
+		await i18n.loadTranslation('errors');
+		const errorTranslation = i18n.getCurrentTranslation('errors');
 
-```tsx
-// MyComponent.tsx
-import { useTranslation } from './hooks/useTranslation';
-import { useI18nLocale } from 'i18n-typed-store-react';
-
-function MyComponent() {
-	const translations = useTranslation('common');
-	const { locale, setLocale } = useI18nLocale();
-
-	if (!translations) {
-		return <div>Loading...</div>;
-	}
-
-	return (
-		<div>
-			<h1>{translations.title}</h1>
-			<p>{translations.greeting}</p>
-			<button onClick={() => setLocale('ru')}>Switch to Russian</button>
-		</div>
-	);
-}
-```
-
-## React Suspense Support
-
-Use `useI18nTranslationLazy` with React Suspense for automatic loading states:
-
-```tsx
-// MyComponent.tsx
-import { Suspense } from 'react';
-import { useTranslationLazy } from './hooks/useTranslationLazy';
-
-function MyComponent() {
-	// This hook throws a promise if translation is not loaded (for Suspense)
-	const translations = useTranslationLazy('common');
-
-	return (
-		<div>
-			<h1>{translations.title}</h1>
-			<p>{translations.greeting}</p>
-		</div>
-	);
-}
-```
-
-```tsx
-// App.tsx
-import { Suspense } from 'react';
-import { I18nTypedStoreProvider } from 'i18n-typed-store-react';
-import { store } from './store';
-import { MyComponent } from './MyComponent';
-
-function App() {
-	return (
-		<I18nTypedStoreProvider store={store} suspenseMode="first-load-locale">
-			<Suspense fallback={<div>Loading translations...</div>}>
-				<MyComponent />
-			</Suspense>
-		</I18nTypedStoreProvider>
-	);
-}
-```
-
-## API Reference
-
-### `I18nTypedStoreProvider`
-
-Provider component that wraps your application to provide translation store context.
-
-```tsx
-<I18nTypedStoreProvider store={store} suspenseMode="first-load-locale">
-	{children}
-</I18nTypedStoreProvider>
-```
-
-**Props:**
-
-- `store` - Translation store instance (created with `createTranslationStore`)
-- `suspenseMode` - Suspense mode: `'once'` | `'first-load-locale'` | `'change-locale'` (default: `'first-load-locale'`)
-    - `'once'` - Suspense only on first load
-    - `'first-load-locale'` - Suspense on first load for each locale
-    - `'change-locale'` - Suspense on every locale change
-- `children` - React children
-
-### `useI18nTranslation`
-
-Hook for accessing translations with automatic loading. Returns `undefined` if translation is not yet loaded.
-
-```tsx
-// Direct usage
-const translations = useI18nTranslation<
-  typeof TRANSLATIONS,
-  typeof LOCALES,
-  ITranslationStoreTypes,
-  'common'
->('common', fromCache?: boolean);
-
-// Typed wrapper (recommended)
-import { useI18nTranslation } from 'i18n-typed-store-react/useI18nTranslation';
-import type { TRANSLATIONS, LOCALES } from './constants';
-import type { ITranslationStoreTypes } from './store';
-
-export const useTranslation = <K extends keyof typeof TRANSLATIONS>(translation: K) => {
-  return useI18nTranslation<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, K>(translation);
-};
-
-// Usage
-const translations = useTranslation('common');
-if (translations) {
-  console.log(translations.greeting);
-}
-```
-
-**Parameters:**
-
-- `namespace` - Namespace key to load translations for
-- `fromCache` - Whether to use cached translation if available (default: `true`)
-
-**Returns:** Translation object for the specified namespace, or `undefined` if not loaded
-
-### `useI18nTranslationLazy`
-
-Hook for accessing translations with React Suspense support. Throws a promise if translation is not loaded.
-
-```tsx
-// Direct usage
-const translations = useI18nTranslationLazy<
-  typeof TRANSLATIONS,
-  typeof LOCALES,
-  ITranslationStoreTypes,
-  'common'
->('common', fromCache?: boolean);
-
-// Typed wrapper (recommended)
-import { useI18nTranslationLazy } from 'i18n-typed-store-react/useI18nTranslationLazy';
-import type { TRANSLATIONS, LOCALES } from './constants';
-import type { ITranslationStoreTypes } from './store';
-
-export const useTranslationLazy = <K extends keyof typeof TRANSLATIONS>(translation: K) => {
-  return useI18nTranslationLazy<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, K>(translation);
-};
-
-// Usage
-function MyComponent() {
-  const translations = useTranslationLazy('common');
-  return <div>{translations.greeting}</div>;
-}
-```
-
-**Parameters:**
-
-- `namespace` - Namespace key to load translations for
-- `fromCache` - Whether to use cached translation if available (default: `true`)
-
-**Returns:** Translation object for the specified namespace (never `undefined`)
-
-**Throws:** Promise if translation is not yet loaded (for React Suspense)
-
-### `useI18nLocale`
-
-Hook for accessing and managing the current locale. Supports SSR/SSG by using `useSyncExternalStore`.
-
-```tsx
-const { locale, setLocale } = useI18nLocale<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes>();
-```
-
-**Returns:**
-
-- `locale` - Current locale key
-- `setLocale` - Function to change the current locale
-
-**Example:**
-
-```tsx
-function LocaleSwitcher() {
-	const { locale, setLocale } = useI18nLocale();
-
-	return (
-		<select value={locale} onChange={(e) => setLocale(e.target.value as keyof typeof LOCALES)}>
-			<option value="en">English</option>
-			<option value="ru">Русский</option>
-		</select>
-	);
-}
-```
-
-### `Safe`
-
-Component that safely extracts strings from translation objects, catching errors.
-
-```tsx
-<Safe errorComponent={<span>N/A</span>} errorHandler={(error) => console.error(error)}>
-	{() => translations.common.pages.main.title}
-</Safe>
-```
-
-**Props:**
-
-- `children` - Function that returns a string (called during render)
-- `errorComponent` - Component to display if an error occurs (default: empty string)
-- `errorHandler` - Optional error handler callback
-
-## SSR/SSG Support
-
-### Next.js Pages Router
-
-```typescript
-// pages/_app.tsx
-import { I18nTypedStoreProvider } from 'i18n-typed-store-react';
-import { storeFactory } from '../lib/i18n';
-import type { AppProps } from 'next/app';
-
-const store = storeFactory.type<TranslationData>();
-
-function MyApp({ Component, pageProps }: AppProps) {
-  return (
-    <I18nTypedStoreProvider store={store}>
-      <Component {...pageProps} />
-    </I18nTypedStoreProvider>
-  );
-}
-
-export default MyApp;
-```
-
-```typescript
-// pages/index.tsx
-import type { GetServerSidePropsContext } from 'next';
-import { getLocaleFromRequest, initializeStore } from 'i18n-typed-store-react';
-import { storeFactory } from '../lib/i18n';
-import type { TranslationData } from '../lib/i18n';
-
-export async function getServerSideProps(context: GetServerSidePropsContext) {
-	const locale = getLocaleFromRequest(context, {
-		defaultLocale: 'en',
-		availableLocales: ['en', 'ru'],
-		cookieName: 'locale',
-		queryParamName: 'locale',
-	});
-
-	const store = storeFactory.type<TranslationData>();
-	initializeStore(store, locale);
-
-	// Preload translations if needed
-	await store.translations.common.load(locale);
-
-	return {
-		props: {
+		// Использование перевода из декоратора
+		return {
 			locale,
-		},
-	};
+			greeting: translation.greeting,
+			title: translation.title,
+			errorMessage: errorTranslation?.notFound,
+		};
+	}
 }
 ```
 
-### Next.js App Router
+### 4. Использование метода `getTranslationByKey`
+
+Для получения переводов по строковым ключам используйте метод `getTranslationByKey`:
 
 ```typescript
-// app/layout.tsx
-import { I18nTypedStoreProvider } from 'i18n-typed-store-react';
-import { storeFactory } from '../lib/i18n';
-import type { TranslationData } from '../lib/i18n';
+// app.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { I18n } from 'i18n-typed-store-nest';
 
-const store = storeFactory.type<TranslationData>();
+@Controller()
+export class AppController {
+	@Get()
+	async getData(@I18n() i18n: I18nService) {
+		// Получение всего namespace объекта
+		const common = i18n.getTranslationByKey('common');
+		// Возвращает: { greeting: string, title: string, ... }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <html>
-      <body>
-        <I18nTypedStoreProvider store={store}>
-          {children}
-        </I18nTypedStoreProvider>
-      </body>
-    </html>
-  );
+		// Получение конкретного значения
+		const greeting = i18n.getTranslationByKey('common.greeting');
+		// Возвращает: string ("Hello")
+
+		// Получение вложенного значения
+		const saveButton = i18n.getTranslationByKey('common.buttons.save');
+		// Возвращает: string ("Save")
+
+		// Получение с указанием локали
+		const greetingRu = i18n.getTranslationByKey('common.greeting', 'ru');
+		// Возвращает: string ("Привет")
+
+		return {
+			greeting,
+			saveButton,
+		};
+	}
 }
 ```
 
+## Настройка модуля
+
+### I18nModule.forRoot
+
+Модуль настраивается через `I18nModule.forRoot()`:
+
 ```typescript
-// app/page.tsx
-import { getLocaleFromRequest, initializeStore } from 'i18n-typed-store-react';
-import { storeFactory } from '../lib/i18n';
-import type { TranslationData } from '../lib/i18n';
-import { headers, cookies } from 'next/headers';
-
-export default async function Page() {
-  const headersList = await headers();
-  const cookieStore = await cookies();
-
-  const locale = getLocaleFromRequest(
-    {
-      headers: Object.fromEntries(headersList),
-      cookies: Object.fromEntries(cookieStore),
-    },
-    {
-      defaultLocale: 'en',
-      availableLocales: ['en', 'ru'],
-    }
-  );
-
-  const store = storeFactory.type<TranslationData>();
-  initializeStore(store, locale);
-  await store.translations.common.load(locale);
-
-  return <div>...</div>;
-}
+I18nModule.forRoot<N, L, M>(options: I18nModuleOptions<N, L, M>): DynamicModule
 ```
 
-### SSR API
+**Параметры:**
 
-#### `getLocaleFromRequest`
+- `store` - Экземпляр translation store (обязательный)
+- `defaultLocale` - Локаль по умолчанию (обязательный)
+- `availableLocales` - Массив доступных локалей для валидации (опционально)
+- `headerName` - Имя header для извлечения локали (по умолчанию: `'accept-language'`)
+- `queryParamName` - Имя query параметра для извлечения локали (по умолчанию: `'locale'`)
+- `cookieName` - Имя cookie для извлечения локали (по умолчанию: `'locale'`)
+- `parseAcceptLanguage` - Парсить ли Accept-Language header (по умолчанию: `true`)
+- `preload` - Конфигурация предзагрузки переводов:
+    - `true` - предзагрузить все namespace и локали
+    - Объект с настройками:
+        - `namespaces` - Массив namespace для предзагрузки (если не указано, загружаются все)
+        - `locales` - Массив локалей для предзагрузки (если не указано, загружаются все)
+        - `fromCache` - Использовать ли кеш при предзагрузке (по умолчанию: `true`)
+    - Если не указано, предзагрузка не выполняется
 
-Gets locale from SSR request context (query params, cookies, headers).
-
-```typescript
-function getLocaleFromRequest<L extends Record<string, string>>(context: RequestContext, options: GetLocaleFromRequestOptions): keyof L;
-```
-
-**Parameters:**
-
-- `context` - Request context with `query`, `cookies`, and `headers`
-- `options` - Options object:
-    - `defaultLocale` - Default locale to use if locale cannot be determined
-    - `availableLocales` - Array of available locale keys for validation
-    - `headerName` - Header name to read locale from (default: `'accept-language'`)
-    - `cookieName` - Cookie name to read locale from
-    - `queryParamName` - Query parameter name to read locale from (default: `'locale'`)
-    - `parseAcceptLanguage` - Whether to parse Accept-Language header (default: `true`)
-
-**Example:**
+**Примеры:**
 
 ```typescript
-const locale = getLocaleFromRequest(context, {
+// Предзагрузка всех переводов
+I18nModule.forRoot({
+	store,
 	defaultLocale: 'en',
-	availableLocales: ['en', 'ru'],
-	cookieName: 'locale',
-	queryParamName: 'locale',
-	headerName: 'accept-language',
-	parseAcceptLanguage: true,
+	preload: true,
+});
+
+// Предзагрузка конкретных namespace
+I18nModule.forRoot({
+	store,
+	defaultLocale: 'en',
+	preload: {
+		namespaces: ['common', 'errors'],
+		locales: ['en', 'ru'],
+	},
+});
+
+// Без предзагрузки
+I18nModule.forRoot({
+	store,
+	defaultLocale: 'en',
+	// preload не указан
 });
 ```
 
-#### `initializeStore`
+## Использование декораторов
 
-Initializes translation store with a specific locale for SSR.
+### `@I18n()`
+
+Получает экземпляр I18nService:
 
 ```typescript
-function initializeStore<N, L, M>(store: TranslationStore<N, L, M>, locale: keyof L): void;
+@Get()
+async getData(@I18n() i18n: I18nService) {
+  const translation = i18n.getCurrentTranslation('common');
+  return translation?.greeting;
+}
 ```
 
-**Parameters:**
+### `@Locale()`
 
-- `store` - Translation store instance
-- `locale` - Locale to initialize with
-
-**Example:**
+Получает текущую локаль как строку:
 
 ```typescript
-const locale = getLocaleFromRequest(context, {
-	defaultLocale: 'en',
-	availableLocales: ['en', 'ru'],
-});
-
-const store = storeFactory.type<TranslationData>();
-initializeStore(store, locale);
+@Get()
+async getData(@Locale() locale: string) {
+  return { locale };
+}
 ```
 
-## Complete Example
+### `@Translation(namespace)`
+
+Получает перевод для указанного namespace. Перевод загружается автоматически, если ещё не загружен:
 
 ```typescript
-// constants.ts
-export const TRANSLATIONS = {
-	common: 'common',
-	errors: 'errors',
-} as const;
-
-export const LOCALES = {
-	en: 'en',
-	ru: 'ru',
-} as const;
+@Get()
+async getData(@Translation('common') translation: CommonTranslationsEn) {
+  return translation.greeting;
+}
 ```
 
+**Важно:** Декоратор `@Translation()` автоматически загружает перевод, если он ещё не загружен. Это происходит асинхронно, поэтому метод должен быть `async`.
+
+## I18nService API
+
+Сервис для работы с переводами и локалями. Можно инжектить напрямую в контроллеры и сервисы:
+
 ```typescript
-// translations/common/en.tsx
+@Injectable()
+export class AppService {
+	constructor(
+		@Inject(I18N_SERVICE)
+		private readonly i18nService: I18nService,
+	) {}
+}
+```
+
+Или использовать токен `I18N_SERVICE`:
+
+```typescript
+import { I18N_SERVICE, I18nService } from 'i18n-typed-store-nest';
+
+@Injectable()
+export class AppService {
+	constructor(
+		@Inject(I18N_SERVICE)
+		private readonly i18nService: I18nService,
+	) {}
+}
+```
+
+### Методы
+
+#### `setLocale(locale: keyof L): void`
+
+Устанавливает текущую локаль.
+
+```typescript
+this.i18nService.setLocale('ru');
+```
+
+#### `getLocale(): keyof L`
+
+Возвращает текущую локаль.
+
+```typescript
+const locale = this.i18nService.getLocale(); // 'en'
+```
+
+#### `getLocales(): L`
+
+Возвращает объект с доступными локалями.
+
+```typescript
+const locales = this.i18nService.getLocales(); // { en: 'en', ru: 'ru' }
+```
+
+#### `loadTranslation(namespace: K, locale?: keyof L, fromCache?: boolean): Promise<void>`
+
+Загружает перевод для указанного namespace.
+
+```typescript
+await this.i18nService.loadTranslation('common', 'en');
+await this.i18nService.loadTranslation('common'); // использует текущую локаль
+```
+
+#### `getTranslation(namespace: K, locale?: keyof L): Promise<M[K]>`
+
+Получает перевод для указанного namespace. Автоматически загружает перевод, если он ещё не загружен.
+
+```typescript
+const translation = await this.i18nService.getTranslation('common', 'en');
+const translation = await this.i18nService.getTranslation('common'); // использует текущую локаль
+```
+
+#### `getCurrentTranslation(namespace: K): M[K] | undefined`
+
+Получает текущий перевод для указанного namespace (без автоматической загрузки).
+
+```typescript
+const translation = this.i18nService.getCurrentTranslation('common');
+// Возвращает undefined, если перевод не загружен
+```
+
+#### `getTranslationByKey(key: Key, locale?: keyof L): GetTranslationValue<M, Key>`
+
+Получает значение перевода по ключу. Поддерживает строковые ключи вида `"namespace"`, `"namespace.key"` или `"namespace.nested.key"`.
+
+```typescript
+// Получить весь namespace
+const common = this.i18nService.getTranslationByKey('common');
+
+// Получить конкретное значение
+const greeting = this.i18nService.getTranslationByKey('common.greeting');
+
+// Получить вложенное значение
+const saveButton = this.i18nService.getTranslationByKey('common.buttons.save');
+
+// С указанием локали
+const greetingRu = this.i18nService.getTranslationByKey('common.greeting', 'ru');
+```
+
+#### `getStore(): TranslationStore<N, L, M>`
+
+Возвращает экземпляр translation store для прямого доступа к store API.
+
+```typescript
+const store = this.i18nService.getStore();
+store.changeLocale('ru');
+```
+
+## I18nInterceptor
+
+Global interceptor, который автоматически определяет локаль из запроса и устанавливает её в I18nService. Регистрируется автоматически при использовании `I18nModule.forRoot()`.
+
+### Автоматическая регистрация (Рекомендуется)
+
+Interceptor автоматически регистрируется как global interceptor при использовании `I18nModule.forRoot()`. Дополнительная конфигурация не требуется:
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { I18nModule } from 'i18n-typed-store-nest';
+import { store } from './i18n/store';
+
+@Module({
+	imports: [
+		I18nModule.forRoot({
+			store,
+			defaultLocale: 'en',
+			availableLocales: ['en', 'ru'],
+		}),
+	],
+})
+export class AppModule {}
+// I18nInterceptor автоматически зарегистрирован и будет работать для всех запросов
+```
+
+### Использование на уровне контроллера/метода
+
+Вы также можете применять interceptor к конкретным контроллерам или методам:
+
+```typescript
+// app.controller.ts
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { I18nInterceptor } from 'i18n-typed-store-nest';
+
+@Controller()
+@UseInterceptors(I18nInterceptor) // Применить ко всем методам в этом контроллере
+export class AppController {
+	@Get()
+	@UseInterceptors(I18nInterceptor) // Или применить к конкретному методу
+	async getData() {
+		// Локаль автоматически определяется и устанавливается
+		return { message: 'Hello' };
+	}
+}
+```
+
+### Как это работает
+
+1. Перехватывает все входящие HTTP запросы
+2. Извлекает локаль из запроса (query параметры, cookies, headers, route параметры)
+3. Устанавливает локаль в I18nService
+4. Присоединяет I18nService к объекту запроса для использования в parameter decorators
+5. Продолжает обработку запроса
+
+## Использование Middleware (Альтернатива Interceptor)
+
+Если вы предпочитаете использовать middleware вместо global interceptor:
+
+```typescript
+// app.module.ts
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { I18nModule, I18nMiddleware } from 'i18n-typed-store-nest';
+import { store } from './i18n/store';
+
+@Module({
+	imports: [
+		I18nModule.forRoot({
+			store,
+			defaultLocale: 'en',
+			availableLocales: ['en', 'ru'],
+		}),
+	],
+})
+export class AppModule implements NestModule {
+	configure(consumer: MiddlewareConsumer) {
+		consumer.apply(I18nMiddleware).forRoutes('*');
+	}
+}
+```
+
+**Примечание:** При использовании middleware interceptor всё равно регистрируется автоматически. Вы можете отключить его, удалив из `providers` в `I18nModule.forRoot()`, но это потребует модификации модуля. В большинстве случаев достаточно использовать interceptor.
+
+## Определение локали
+
+Модуль автоматически определяет локаль из запроса в следующем порядке приоритета:
+
+1. **Query параметр** (например, `?locale=en`)
+2. **Route параметр** (например, `/api/:locale/users`)
+3. **Cookie** (например, `locale=en`)
+4. **Header `Accept-Language`** (парсится автоматически)
+5. **Локаль по умолчанию** (из конфигурации)
+
+**Пример запроса:**
+
+```http
+GET /api/data?locale=ru
+Cookie: locale=en
+Header: Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8
+```
+
+Результат: локаль будет `'ru'` (query параметр имеет наивысший приоритет).
+
+### Парсинг Accept-Language
+
+Когда `parseAcceptLanguage: true`, модуль парсит заголовок `Accept-Language` согласно стандарту RFC 2616:
+
+```http
+Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7
+```
+
+Модуль:
+
+1. Разбирает языки по приоритету (q-value)
+2. Ищет точное совпадение с доступными локалями
+3. Ищет совпадение базового языка (например, `ru` из `ru-RU`)
+4. Использует локаль по умолчанию, если ничего не найдено
+
+## Type-Safe переводы
+
+Все переводы полностью типобезопасны:
+
+```typescript
+@Controller()
+export class AppController {
+	@Get()
+	async getData(@Translation('common') translation: CommonTranslationsEn) {
+		// ✅ TypeScript знает все ключи переводов
+		const greeting = translation.greeting;
+		const title = translation.title;
+
+		// ❌ TypeScript ошибка: Property 'invalidKey' does not exist
+		// const invalid = translation.invalidKey;
+
+		return { greeting, title };
+	}
+}
+```
+
+### Структура классов переводов
+
+Библиотека разработана для работы с классами TypeScript для переводов, обеспечивая полную типобезопасность и поддержку IDE (переход к определению, автодополнение). Пример класса перевода:
+
+```typescript
+// translations/common/en.ts
 import { createPluralSelector } from 'i18n-typed-store';
 
 const plur = createPluralSelector('en');
 
 export default class CommonTranslationsEn {
 	title = 'Welcome';
-	greeting = 'Hello, World!';
+	loading = 'Loading...';
+	error = 'An error occurred';
 
 	buttons = {
 		save: 'Save',
 		cancel: 'Cancel',
+		delete: 'Delete',
 	};
 
+	messages = {
+		notFound: 'Not found',
+		unauthorized: 'You are not authorized to perform this action',
+	};
+
+	// Метод плюрализации
 	items = (count: number) =>
 		count +
 		' ' +
@@ -544,120 +538,338 @@ export default class CommonTranslationsEn {
 }
 ```
 
+**Преимущества использования классов:**
+
+- ✅ Полная типобезопасность TypeScript с поддержкой перехода к определению в IDE
+- ✅ Методы для плюрализации и динамических переводов
+- ✅ Лучшая организация кода и поддерживаемость
+- ✅ Валидация ключей переводов на этапе компиляции
+
+## Примеры
+
+### Полный пример контроллера
+
 ```typescript
-// store.ts
-import { createTranslationStore } from 'i18n-typed-store';
+// app.controller.ts
+import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { I18n, Locale, Translation } from 'i18n-typed-store-nest';
 import type CommonTranslationsEn from './translations/common/en';
-import { TRANSLATIONS, LOCALES } from './constants';
+import type ErrorsTranslationsEn from './translations/errors/en';
 
-export interface ITranslationStoreTypes extends Record<keyof typeof TRANSLATIONS, any> {
-	common: CommonTranslationsEn;
-}
-
-export const store = createTranslationStore({
-	namespaces: TRANSLATIONS,
-	locales: LOCALES,
-	loadModule: async (locale, namespace) => {
-		return await import(`./translations/${namespace}/${locale}.tsx`);
-	},
-	extractTranslation: (module) => new module.default(),
-	defaultLocale: 'en',
-}).type<ITranslationStoreTypes>();
-```
-
-```typescript
-// hooks/useTranslation.ts
-import { useI18nTranslation } from 'i18n-typed-store-react/useI18nTranslation';
-import type { TRANSLATIONS, LOCALES } from '../constants';
-import type { ITranslationStoreTypes } from '../store';
-
-export const useTranslation = <K extends keyof typeof TRANSLATIONS>(translation: K) => {
-	return useI18nTranslation<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, K>(translation);
-};
-```
-
-```tsx
-// App.tsx
-import { I18nTypedStoreProvider } from 'i18n-typed-store-react';
-import { store } from './store';
-import { MyComponent } from './MyComponent';
-
-function App() {
-	return (
-		<I18nTypedStoreProvider store={store}>
-			<MyComponent />
-		</I18nTypedStoreProvider>
-	);
-}
-
-export default App;
-```
-
-```tsx
-// MyComponent.tsx
-import { useTranslation } from './hooks/useTranslation';
-import { useI18nLocale } from 'i18n-typed-store-react';
-
-function MyComponent() {
-	const translations = useTranslation('common');
-	const { locale, setLocale } = useI18nLocale();
-
-	if (!translations) {
-		return <div>Loading...</div>;
+@Controller('api')
+export class AppController {
+	@Get('greeting')
+	async getGreeting(@Locale() locale: string, @Translation('common') translation: CommonTranslationsEn) {
+		return {
+			locale,
+			message: translation.greeting,
+			title: translation.title,
+		};
 	}
 
-	return (
-		<div>
-			<h1>{translations.title}</h1>
-			<p>{translations.greeting}</p>
-			<p>{translations.items(5)}</p>
-			<button onClick={() => setLocale(locale === 'en' ? 'ru' : 'en')}>Switch to {locale === 'en' ? 'Russian' : 'English'}</button>
-		</div>
-	);
+	@Get('errors/:code')
+	async getError(@Param('code') code: string, @I18n() i18n: I18nService) {
+		await i18n.loadTranslation('errors');
+		const errors = i18n.getCurrentTranslation('errors');
+
+		return {
+			error: errors?.[code] || 'Unknown error',
+		};
+	}
+
+	@Post('change-locale')
+	async changeLocale(@Body('locale') locale: 'en' | 'ru', @I18n() i18n: I18nService) {
+		i18n.setLocale(locale);
+		return { success: true, locale: i18n.getLocale() };
+	}
 }
 ```
 
-## Type Safety
+### Пример сервиса
 
-All hooks and components are fully type-safe:
+```typescript
+// app.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { I18N_SERVICE, I18nService } from 'i18n-typed-store-nest';
 
-```tsx
-// ✅ TypeScript knows all available translation keys
-const translations = useTranslation('common');
-if (translations) {
-	const title = translations.title; // ✅ Type-safe
-	const greeting = translations.greeting; // ✅ Type-safe
+@Injectable()
+export class AppService {
+	constructor(
+		@Inject(I18N_SERVICE)
+		private readonly i18nService: I18nService,
+	) {}
+
+	async getGreeting() {
+		// Загрузка перевода
+		await this.i18nService.loadTranslation('common');
+
+		// Получение перевода
+		const translation = this.i18nService.getCurrentTranslation('common');
+
+		return translation?.greeting || 'Hello';
+	}
+
+	async changeLocale(locale: 'en' | 'ru') {
+		this.i18nService.setLocale(locale);
+	}
+
+	async getLocalizedMessage(key: string) {
+		// Использование getTranslationByKey для строковых ключей
+		return this.i18nService.getTranslationByKey(`common.${key}`);
+	}
 }
-
-// ❌ TypeScript error: 'invalidKey' doesn't exist
-// const invalid = translations.invalidKey;
-
-// ✅ TypeScript knows all available locales
-const { locale, setLocale } = useI18nLocale();
-setLocale('en'); // ✅ Type-safe
-setLocale('ru'); // ✅ Type-safe
-
-// ❌ TypeScript error: 'fr' is not a valid locale
-// setLocale('fr');
 ```
 
-## Contributing
+### Пример с плюрализацией
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```typescript
+// translations/products/en.ts
+import { createPluralSelector } from 'i18n-typed-store';
 
-## License
+const plur = createPluralSelector('en');
+
+export default class ProductsTranslationsEn {
+	title = 'Products';
+	addToCart = 'Add to Cart';
+
+	// Метод плюрализации
+	productCount = (count: number) =>
+		count +
+		' ' +
+		plur(count, {
+			one: 'product',
+			other: 'products',
+		});
+
+	itemsInCart = (count: number) =>
+		count +
+		' ' +
+		plur(count, {
+			zero: 'No items',
+			one: 'item',
+			other: 'items',
+		}) +
+		' in cart';
+}
+```
+
+```typescript
+// products.controller.ts
+@Controller('products')
+export class ProductsController {
+	@Get('count')
+	async getCount(@Query('count') count: number, @Translation('products') translation: ProductsTranslationsEn) {
+		return {
+			message: translation.productCount(count),
+			cartMessage: translation.itemsInCart(count),
+		};
+	}
+}
+```
+
+## Предзагрузка переводов
+
+Модуль поддерживает предзагрузку переводов при инициализации. Это полезно для предварительной загрузки часто используемых переводов.
+
+### Предзагрузка всех переводов
+
+```typescript
+I18nModule.forRoot({
+	store,
+	defaultLocale: 'en',
+	preload: true, // Предзагрузить все namespace и локали
+});
+```
+
+### Предзагрузка конкретных namespace
+
+```typescript
+I18nModule.forRoot({
+	store,
+	defaultLocale: 'en',
+	preload: {
+		namespaces: ['common', 'errors'],
+		locales: ['en', 'ru'],
+	},
+});
+```
+
+### Предзагрузка конкретных локалей
+
+```typescript
+I18nModule.forRoot({
+	store,
+	defaultLocale: 'en',
+	preload: {
+		locales: ['en'], // Только английский
+	},
+});
+```
+
+### Без предзагрузки
+
+```typescript
+I18nModule.forRoot({
+	store,
+	defaultLocale: 'en',
+	// preload не указан - переводы загружаются по требованию
+});
+```
+
+## Продвинутые сценарии
+
+### Работа с несколькими namespace
+
+```typescript
+@Controller()
+export class AppController {
+	@Get()
+	async getData(@I18n() i18n: I18nService) {
+		// Загрузка нескольких переводов
+		await Promise.all([i18n.loadTranslation('common'), i18n.loadTranslation('errors'), i18n.loadTranslation('ui')]);
+
+		// Использование переводов
+		const common = i18n.getCurrentTranslation('common');
+		const errors = i18n.getCurrentTranslation('errors');
+		const ui = i18n.getCurrentTranslation('ui');
+
+		return {
+			greeting: common?.greeting,
+			notFound: errors?.notFound,
+			saveButton: ui?.buttons?.save,
+		};
+	}
+}
+```
+
+### Использование getTranslationByKey для динамических ключей
+
+```typescript
+@Controller()
+export class AppController {
+	@Get('messages/:key')
+	async getMessage(@Param('key') key: string, @I18n() i18n: I18nService) {
+		// Использование динамических ключей (с потерей типобезопасности)
+		const message = i18n.getTranslationByKey(`common.${key}` as any);
+		return { message };
+	}
+}
+```
+
+### Прямой доступ к store
+
+```typescript
+@Controller()
+export class AppController {
+	@Get()
+	async getData(@I18n() i18n: I18nService) {
+		const store = i18n.getStore();
+
+		// Прямой доступ к store API
+		store.changeLocale('ru');
+		await store.translations.common.load('ru');
+
+		return store.translations.common.currentTranslation;
+	}
+}
+```
+
+## API Reference
+
+### `I18nModule`
+
+Глобальный NestJS модуль для интернационализации.
+
+```typescript
+I18nModule.forRoot<N, L, M>(options: I18nModuleOptions<N, L, M>): DynamicModule
+```
+
+### `I18nService`
+
+Сервис для работы с переводами и локалями.
+
+```typescript
+class I18nService<N, L, M> {
+	setLocale(locale: keyof L): void;
+	getLocale(): keyof L;
+	getLocales(): L;
+	loadTranslation<K extends keyof N>(namespace: K, locale?: keyof L, fromCache?: boolean): Promise<void>;
+	getTranslation<K extends keyof N>(namespace: K, locale?: keyof L): Promise<M[K]>;
+	getCurrentTranslation<K extends keyof N>(namespace: K): M[K] | undefined;
+	getTranslationByKey<Key extends TranslationKeys<M>>(key: Key, locale?: keyof L): GetTranslationValue<M, Key>;
+	getStore(): TranslationStore<N, L, M>;
+}
+```
+
+### `I18nInterceptor`
+
+Global interceptor, который автоматически определяет и устанавливает локаль из запроса. Регистрируется автоматически при использовании `I18nModule.forRoot()`.
+
+### `I18nMiddleware`
+
+Альтернатива interceptor для установки локали из запроса. Можно использовать вручную:
+
+```typescript
+consumer.apply(I18nMiddleware).forRoutes('*');
+```
+
+### Декораторы
+
+#### `@I18n()`
+
+Получает экземпляр I18nService.
+
+```typescript
+@Get()
+async getData(@I18n() i18n: I18nService) {
+  const translation = i18n.getTranslation('common');
+  return translation?.greeting;
+}
+```
+
+#### `@Locale()`
+
+Получает текущую локаль как строку.
+
+```typescript
+@Get()
+async getData(@Locale() locale: string) {
+  return { locale };
+}
+```
+
+#### `@Translation(namespace)`
+
+Получает перевод для указанного namespace.
+
+```typescript
+@Get()
+async getData(@Translation('common') translation: CommonTranslationsEn) {
+  return translation.greeting;
+}
+```
+
+## Токены для dependency injection
+
+Библиотека экспортирует токены для использования в dependency injection:
+
+- `I18N_STORE` - Токен для translation store
+- `I18N_OPTIONS` - Токен для опций модуля
+- `I18N_SERVICE` - Токен для I18nService (рекомендуется использовать этот токен для инжекции сервиса)
+
+## Лицензия
 
 MIT
 
-## Author
+## Автор
 
 Alexander Lvov
 
-## Related
-
-- [i18n-typed-store](https://github.com/ialexanderlvov/i18n-typed-store) - Core library
-- [React Example](https://github.com/ialexanderlvov/i18n-typed-store-react-example) - Complete working example with React, TypeScript, and all features demonstrated
-
-## Repository
+## Репозиторий
 
 [GitHub](https://github.com/ialexanderlvov/i18n-typed-store)
+
+## Связанные пакеты
+
+- [i18n-typed-store](../i18n-typed-store/README.md) - Основная библиотека
+- [i18n-typed-store-react](../i18n-typed-store-react/README.md) - React интеграция
