@@ -1,5 +1,5 @@
 {
-	"name": "i18n-typed-store-react",
+	"name": "i18n-typed-store-nest",
 	"version": "0.3.0",
 	"description": "Type-safe translation store for managing i18n locales with full TypeScript support",
 	"main": "dist/index.js",
@@ -48,12 +48,14 @@
 		"i18n-typed-store": "workspace:*"
 	},
 	"peerDependencies": {
-		"react": ">=18.0.0",
-		"react-dom": ">=18.0.0"
+		"@nestjs/common": "^10.0.0",
+		"@nestjs/core": "^10.0.0",
+		"rxjs": "^7.0.0"
 	},
 	"devDependencies": {
-		"@types/react": "^19.2.8",
+		"@nestjs/common": "^11.1.12",
+		"@nestjs/core": "^11.1.12",
 		"@vitest/coverage-v8": "4.0.17",
-		"react": "^19.2.3"
+		"rxjs": "^7.8.2"
 	}
 }
