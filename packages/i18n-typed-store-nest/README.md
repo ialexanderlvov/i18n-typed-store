@@ -1,41 +1,41 @@
 # i18n-typed-store-nest
 
-> ⚠️ **ВНИМАНИЕ: API библиотеки находится в активной разработке и может значительно изменяться от версии к версии. Используйте точные версии в package.json и внимательно читайте changelog при обновлении.**
+> ⚠️ **WARNING: The library API is under active development and may change significantly between versions. Use exact versions in package.json and carefully read the changelog when updating.**
 
-Type-safe translation store для NestJS с полной поддержкой TypeScript. Интеграция `i18n-typed-store` для NestJS приложений с автоматическим определением локали из запросов, декораторами для удобного доступа к переводам и поддержкой предзагрузки переводов.
+Type-safe translation store for NestJS with full TypeScript support. Integration of `i18n-typed-store` for NestJS applications with automatic locale detection from requests, decorators for convenient access to translations, and preload support.
 
-## Возможности
+## Features
 
-- ✅ **Полная поддержка TypeScript** - Типобезопасность для переводов и локалей
-- ✅ **IDE интеграция** - Переход к определению, автодополнение с классами переводов
-- ✅ **Автоматическое определение локали** - Из query параметров, cookies, headers, route параметров
-- ✅ **Декораторы** - Удобные декораторы `@I18n()`, `@Locale()`, `@Translation()` для доступа к переводам
-- ✅ **Global Interceptor** - Автоматическая регистрация interceptor для определения локали
-- ✅ **Middleware поддержка** - Альтернатива interceptor через middleware
-- ✅ **Предзагрузка переводов** - Автоматическая предзагрузка при инициализации модуля
-- ✅ **Type-safe API** - Валидация ключей переводов и локалей на этапе компиляции
-- ✅ **Lazy loading** - Загрузка переводов только когда необходимо
-- ✅ **Fallback локали** - Автоматическое слияние с fallback переводами
+- ✅ **Full TypeScript support** - Complete type safety for translations and locales
+- ✅ **IDE integration** - Go-to definition, autocomplete with translation classes
+- ✅ **Automatic locale detection** - From query parameters, cookies, headers, route parameters
+- ✅ **Decorators** - Convenient decorators `@I18n()`, `@Locale()`, `@Translation()` for accessing translations
+- ✅ **Global Interceptor** - Automatic interceptor registration for locale detection
+- ✅ **Middleware support** - Alternative to interceptor via middleware
+- ✅ **Translation preloading** - Automatic preloading on module initialization
+- ✅ **Type-safe API** - Compile-time validation of translation keys and locales
+- ✅ **Lazy loading** - Load translations only when needed
+- ✅ **Fallback locales** - Automatic merging with fallback translations
 
-## Установка
+## Installation
 
 ```bash
-npm install i18n-typed-store-nest i18n-typed-store
+npm install i18n-typed-store-nest
 ```
 
 ```bash
-yarn add i18n-typed-store-nest i18n-typed-store
+yarn add i18n-typed-store-nest
 ```
 
 ```bash
-pnpm add i18n-typed-store-nest i18n-typed-store
+pnpm add i18n-typed-store-nest
 ```
 
-## Быстрый старт
+## Quick Start
 
-### 1. Создание translation store
+### 1. Creating translation store
 
-Сначала создайте translation store (общий для всего проекта):
+First, create a translation store (shared across the project):
 
 ```typescript
 // i18n/store.ts
@@ -64,7 +64,7 @@ export const store = createTranslationStore({
 }).type<ITranslationStoreTypes>();
 ```
 
-### 2. Настройка модуля
+### 2. Module configuration
 
 ```typescript
 // app.module.ts
@@ -82,18 +82,18 @@ import { store } from './i18n/store';
 			queryParamName: 'locale',
 			cookieName: 'locale',
 			parseAcceptLanguage: true,
-			// Предзагрузка всех переводов при инициализации
+			// Preload all translations on initialization
 			preload: true,
 		}),
 	],
 })
 export class AppModule {}
-// I18nInterceptor автоматически зарегистрирован и будет определять локаль для каждого запроса
+// I18nInterceptor is automatically registered and will detect locale from each request
 ```
 
-### 3. Использование декораторов
+### 3. Using decorators
 
-Модуль автоматически определяет локаль из запроса (query параметры, cookies, headers) и устанавливает её в сервисе. Вы можете использовать декораторы для доступа к переводам:
+The module automatically detects locale from the request (query parameters, cookies, headers) and sets it in the service. You can use decorators to access translations:
 
 ```typescript
 // app.controller.ts
@@ -105,14 +105,14 @@ import type CommonTranslationsEn from './translations/common/en';
 export class AppController {
 	@Get()
 	async getData(@I18n() i18n: I18nService, @Locale() locale: string, @Translation('common') translation: CommonTranslationsEn) {
-		// Использование I18nService напрямую
+		// Use I18nService directly
 		const currentLocale = i18n.getLocale();
 
-		// Загрузка перевода при необходимости
+		// Load translation if needed
 		await i18n.loadTranslation('errors');
 		const errorTranslation = i18n.getCurrentTranslation('errors');
 
-		// Использование перевода из декоратора
+		// Use translation from decorator
 		return {
 			locale,
 			greeting: translation.greeting,
@@ -123,9 +123,9 @@ export class AppController {
 }
 ```
 
-### 4. Использование метода `getTranslationByKey`
+### 4. Using `getTranslationByKey` method
 
-Для получения переводов по строковым ключам используйте метод `getTranslationByKey`:
+To get translations by string keys, use the `getTranslationByKey` method:
 
 ```typescript
 // app.controller.ts
@@ -136,21 +136,21 @@ import { I18n } from 'i18n-typed-store-nest';
 export class AppController {
 	@Get()
 	async getData(@I18n() i18n: I18nService) {
-		// Получение всего namespace объекта
+		// Get entire namespace object
 		const common = i18n.getTranslationByKey('common');
-		// Возвращает: { greeting: string, title: string, ... }
+		// Returns: { greeting: string, title: string, ... }
 
-		// Получение конкретного значения
+		// Get specific value
 		const greeting = i18n.getTranslationByKey('common.greeting');
-		// Возвращает: string ("Hello")
+		// Returns: string ("Hello")
 
-		// Получение вложенного значения
+		// Get nested value
 		const saveButton = i18n.getTranslationByKey('common.buttons.save');
-		// Возвращает: string ("Save")
+		// Returns: string ("Save")
 
-		// Получение с указанием локали
+		// Get with specified locale
 		const greetingRu = i18n.getTranslationByKey('common.greeting', 'ru');
-		// Возвращает: string ("Привет")
+		// Returns: string ("Привет")
 
 		return {
 			greeting,
@@ -160,44 +160,44 @@ export class AppController {
 }
 ```
 
-## Настройка модуля
+## Module Configuration
 
 ### I18nModule.forRoot
 
-Модуль настраивается через `I18nModule.forRoot()`:
+The module is configured via `I18nModule.forRoot()`:
 
 ```typescript
 I18nModule.forRoot<N, L, M>(options: I18nModuleOptions<N, L, M>): DynamicModule
 ```
 
-**Параметры:**
+**Options:**
 
-- `store` - Экземпляр translation store (обязательный)
-- `defaultLocale` - Локаль по умолчанию (обязательный)
-- `availableLocales` - Массив доступных локалей для валидации (опционально)
-- `headerName` - Имя header для извлечения локали (по умолчанию: `'accept-language'`)
-- `queryParamName` - Имя query параметра для извлечения локали (по умолчанию: `'locale'`)
-- `cookieName` - Имя cookie для извлечения локали (по умолчанию: `'locale'`)
-- `parseAcceptLanguage` - Парсить ли Accept-Language header (по умолчанию: `true`)
-- `preload` - Конфигурация предзагрузки переводов:
-    - `true` - предзагрузить все namespace и локали
-    - Объект с настройками:
-        - `namespaces` - Массив namespace для предзагрузки (если не указано, загружаются все)
-        - `locales` - Массив локалей для предзагрузки (если не указано, загружаются все)
-        - `fromCache` - Использовать ли кеш при предзагрузке (по умолчанию: `true`)
-    - Если не указано, предзагрузка не выполняется
+- `store` - Translation store instance (required)
+- `defaultLocale` - Default locale (required)
+- `availableLocales` - Array of available locales for validation (optional)
+- `headerName` - Header name for extracting locale (default: `'accept-language'`)
+- `queryParamName` - Query parameter name for extracting locale (default: `'locale'`)
+- `cookieName` - Cookie name for extracting locale (default: `'locale'`)
+- `parseAcceptLanguage` - Whether to parse Accept-Language header (default: `true`)
+- `preload` - Translation preload configuration:
+    - `true` - preload all namespaces and locales
+    - Object with settings:
+        - `namespaces` - Array of namespaces to preload (if not specified, all are loaded)
+        - `locales` - Array of locales to preload (if not specified, all are loaded)
+        - `fromCache` - Whether to use cache when preloading (default: `true`)
+    - If not specified, preloading is not performed
 
-**Примеры:**
+**Examples:**
 
 ```typescript
-// Предзагрузка всех переводов
+// Preload all translations
 I18nModule.forRoot({
 	store,
 	defaultLocale: 'en',
 	preload: true,
 });
 
-// Предзагрузка конкретных namespace
+// Preload specific namespaces
 I18nModule.forRoot({
 	store,
 	defaultLocale: 'en',
@@ -207,19 +207,19 @@ I18nModule.forRoot({
 	},
 });
 
-// Без предзагрузки
+// Without preloading
 I18nModule.forRoot({
 	store,
 	defaultLocale: 'en',
-	// preload не указан
+	// preload not specified
 });
 ```
 
-## Использование декораторов
+## Using Decorators
 
 ### `@I18n()`
 
-Получает экземпляр I18nService:
+Gets the I18nService instance:
 
 ```typescript
 @Get()
@@ -231,7 +231,7 @@ async getData(@I18n() i18n: I18nService) {
 
 ### `@Locale()`
 
-Получает текущую локаль как строку:
+Gets the current locale as a string:
 
 ```typescript
 @Get()
@@ -242,7 +242,7 @@ async getData(@Locale() locale: string) {
 
 ### `@Translation(namespace)`
 
-Получает перевод для указанного namespace. Перевод загружается автоматически, если ещё не загружен:
+Gets the translation for the specified namespace. Translation is loaded automatically if not yet loaded:
 
 ```typescript
 @Get()
@@ -251,11 +251,11 @@ async getData(@Translation('common') translation: CommonTranslationsEn) {
 }
 ```
 
-**Важно:** Декоратор `@Translation()` автоматически загружает перевод, если он ещё не загружен. Это происходит асинхронно, поэтому метод должен быть `async`.
+**Important:** The `@Translation()` decorator automatically loads the translation if it is not yet loaded. This happens asynchronously, so the method must be `async`.
 
 ## I18nService API
 
-Сервис для работы с переводами и локалями. Можно инжектить напрямую в контроллеры и сервисы:
+Service for working with translations and locales. Can be injected directly into controllers and services:
 
 ```typescript
 @Injectable()
@@ -267,7 +267,7 @@ export class AppService {
 }
 ```
 
-Или использовать токен `I18N_SERVICE`:
+Or use the `I18N_SERVICE` token:
 
 ```typescript
 import { I18N_SERVICE, I18nService } from 'i18n-typed-store-nest';
@@ -281,11 +281,11 @@ export class AppService {
 }
 ```
 
-### Методы
+### Methods
 
 #### `setLocale(locale: keyof L): void`
 
-Устанавливает текущую локаль.
+Sets the current locale.
 
 ```typescript
 this.i18nService.setLocale('ru');
@@ -293,7 +293,7 @@ this.i18nService.setLocale('ru');
 
 #### `getLocale(): keyof L`
 
-Возвращает текущую локаль.
+Returns the current locale.
 
 ```typescript
 const locale = this.i18nService.getLocale(); // 'en'
@@ -301,7 +301,7 @@ const locale = this.i18nService.getLocale(); // 'en'
 
 #### `getLocales(): L`
 
-Возвращает объект с доступными локалями.
+Returns an object with available locales.
 
 ```typescript
 const locales = this.i18nService.getLocales(); // { en: 'en', ru: 'ru' }
@@ -309,52 +309,52 @@ const locales = this.i18nService.getLocales(); // { en: 'en', ru: 'ru' }
 
 #### `loadTranslation(namespace: K, locale?: keyof L, fromCache?: boolean): Promise<void>`
 
-Загружает перевод для указанного namespace.
+Loads translation for the specified namespace.
 
 ```typescript
 await this.i18nService.loadTranslation('common', 'en');
-await this.i18nService.loadTranslation('common'); // использует текущую локаль
+await this.i18nService.loadTranslation('common'); // uses current locale
 ```
 
 #### `getTranslation(namespace: K, locale?: keyof L): Promise<M[K]>`
 
-Получает перевод для указанного namespace. Автоматически загружает перевод, если он ещё не загружен.
+Gets translation for the specified namespace. Automatically loads translation if not yet loaded.
 
 ```typescript
 const translation = await this.i18nService.getTranslation('common', 'en');
-const translation = await this.i18nService.getTranslation('common'); // использует текущую локаль
+const translation = await this.i18nService.getTranslation('common'); // uses current locale
 ```
 
 #### `getCurrentTranslation(namespace: K): M[K] | undefined`
 
-Получает текущий перевод для указанного namespace (без автоматической загрузки).
+Gets the current translation for the specified namespace (without automatic loading).
 
 ```typescript
 const translation = this.i18nService.getCurrentTranslation('common');
-// Возвращает undefined, если перевод не загружен
+// Returns undefined if translation is not loaded
 ```
 
 #### `getTranslationByKey(key: Key, locale?: keyof L): GetTranslationValue<M, Key>`
 
-Получает значение перевода по ключу. Поддерживает строковые ключи вида `"namespace"`, `"namespace.key"` или `"namespace.nested.key"`.
+Gets translation value by key. Supports string keys in the format `"namespace"`, `"namespace.key"` or `"namespace.nested.key"`.
 
 ```typescript
-// Получить весь namespace
+// Get entire namespace
 const common = this.i18nService.getTranslationByKey('common');
 
-// Получить конкретное значение
+// Get specific value
 const greeting = this.i18nService.getTranslationByKey('common.greeting');
 
-// Получить вложенное значение
+// Get nested value
 const saveButton = this.i18nService.getTranslationByKey('common.buttons.save');
 
-// С указанием локали
+// With locale specified
 const greetingRu = this.i18nService.getTranslationByKey('common.greeting', 'ru');
 ```
 
 #### `getStore(): TranslationStore<N, L, M>`
 
-Возвращает экземпляр translation store для прямого доступа к store API.
+Returns the translation store instance for direct access to store API.
 
 ```typescript
 const store = this.i18nService.getStore();
@@ -363,11 +363,11 @@ store.changeLocale('ru');
 
 ## I18nInterceptor
 
-Global interceptor, который автоматически определяет локаль из запроса и устанавливает её в I18nService. Регистрируется автоматически при использовании `I18nModule.forRoot()`.
+Global interceptor that automatically detects locale from the request and sets it in I18nService. Registered automatically when using `I18nModule.forRoot()`.
 
-### Автоматическая регистрация (Рекомендуется)
+### Automatic Registration (Recommended)
 
-Interceptor автоматически регистрируется как global interceptor при использовании `I18nModule.forRoot()`. Дополнительная конфигурация не требуется:
+Interceptor is automatically registered as a global interceptor when using `I18nModule.forRoot()`. No additional configuration needed:
 
 ```typescript
 // app.module.ts
@@ -385,12 +385,12 @@ import { store } from './i18n/store';
 	],
 })
 export class AppModule {}
-// I18nInterceptor автоматически зарегистрирован и будет работать для всех запросов
+// I18nInterceptor is automatically registered and will work for all requests
 ```
 
-### Использование на уровне контроллера/метода
+### Controller/Method Level Usage
 
-Вы также можете применять interceptor к конкретным контроллерам или методам:
+You can also apply the interceptor to specific controllers or methods:
 
 ```typescript
 // app.controller.ts
@@ -398,28 +398,28 @@ import { Controller, Get, UseInterceptors } from '@nestjs/common';
 import { I18nInterceptor } from 'i18n-typed-store-nest';
 
 @Controller()
-@UseInterceptors(I18nInterceptor) // Применить ко всем методам в этом контроллере
+@UseInterceptors(I18nInterceptor) // Apply to all methods in this controller
 export class AppController {
 	@Get()
-	@UseInterceptors(I18nInterceptor) // Или применить к конкретному методу
+	@UseInterceptors(I18nInterceptor) // Or apply to specific method
 	async getData() {
-		// Локаль автоматически определяется и устанавливается
+		// Locale is automatically detected and set
 		return { message: 'Hello' };
 	}
 }
 ```
 
-### Как это работает
+### How It Works
 
-1. Перехватывает все входящие HTTP запросы
-2. Извлекает локаль из запроса (query параметры, cookies, headers, route параметры)
-3. Устанавливает локаль в I18nService
-4. Присоединяет I18nService к объекту запроса для использования в parameter decorators
-5. Продолжает обработку запроса
+1. Intercepts all incoming HTTP requests
+2. Extracts locale from request (query parameters, cookies, headers, route parameters)
+3. Sets locale in I18nService
+4. Attaches I18nService to request object for use in parameter decorators
+5. Continues with request processing
 
-## Использование Middleware (Альтернатива Interceptor)
+## Using Middleware (Alternative to Interceptor)
 
-Если вы предпочитаете использовать middleware вместо global interceptor:
+If you prefer using middleware instead of a global interceptor:
 
 ```typescript
 // app.module.ts
@@ -443,19 +443,19 @@ export class AppModule implements NestModule {
 }
 ```
 
-**Примечание:** При использовании middleware interceptor всё равно регистрируется автоматически. Вы можете отключить его, удалив из `providers` в `I18nModule.forRoot()`, но это потребует модификации модуля. В большинстве случаев достаточно использовать interceptor.
+**Note:** When using middleware, the interceptor is still automatically registered. You can disable it by removing it from `providers` in `I18nModule.forRoot()`, but this requires module modification. In most cases, using the interceptor is sufficient.
 
-## Определение локали
+## Locale Detection
 
-Модуль автоматически определяет локаль из запроса в следующем порядке приоритета:
+The module automatically detects locale from the request in the following priority order:
 
-1. **Query параметр** (например, `?locale=en`)
-2. **Route параметр** (например, `/api/:locale/users`)
-3. **Cookie** (например, `locale=en`)
-4. **Header `Accept-Language`** (парсится автоматически)
-5. **Локаль по умолчанию** (из конфигурации)
+1. **Query parameter** (e.g., `?locale=en`)
+2. **Route parameter** (e.g., `/api/:locale/users`)
+3. **Cookie** (e.g., `locale=en`)
+4. **Header `Accept-Language`** (parsed automatically)
+5. **Default locale** (from configuration)
 
-**Пример запроса:**
+**Example request:**
 
 ```http
 GET /api/data?locale=ru
@@ -463,37 +463,37 @@ Cookie: locale=en
 Header: Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8
 ```
 
-Результат: локаль будет `'ru'` (query параметр имеет наивысший приоритет).
+Result: locale will be `'ru'` (query parameter has highest priority).
 
-### Парсинг Accept-Language
+### Accept-Language Parsing
 
-Когда `parseAcceptLanguage: true`, модуль парсит заголовок `Accept-Language` согласно стандарту RFC 2616:
+When `parseAcceptLanguage: true`, the module parses the `Accept-Language` header according to RFC 2616 standard:
 
 ```http
 Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7
 ```
 
-Модуль:
+The module:
 
-1. Разбирает языки по приоритету (q-value)
-2. Ищет точное совпадение с доступными локалями
-3. Ищет совпадение базового языка (например, `ru` из `ru-RU`)
-4. Использует локаль по умолчанию, если ничего не найдено
+1. Parses languages by priority (q-value)
+2. Searches for exact match with available locales
+3. Searches for base language match (e.g., `ru` from `ru-RU`)
+4. Uses default locale if nothing is found
 
-## Type-Safe переводы
+## Type-Safe Translations
 
-Все переводы полностью типобезопасны:
+All translations are fully type-safe:
 
 ```typescript
 @Controller()
 export class AppController {
 	@Get()
 	async getData(@Translation('common') translation: CommonTranslationsEn) {
-		// ✅ TypeScript знает все ключи переводов
+		// ✅ TypeScript knows all translation keys
 		const greeting = translation.greeting;
 		const title = translation.title;
 
-		// ❌ TypeScript ошибка: Property 'invalidKey' does not exist
+		// ❌ TypeScript error: Property 'invalidKey' does not exist
 		// const invalid = translation.invalidKey;
 
 		return { greeting, title };
@@ -501,9 +501,9 @@ export class AppController {
 }
 ```
 
-### Структура классов переводов
+### Translation Class Structure
 
-Библиотека разработана для работы с классами TypeScript для переводов, обеспечивая полную типобезопасность и поддержку IDE (переход к определению, автодополнение). Пример класса перевода:
+The library is designed to work with TypeScript classes for translations, providing full type safety and IDE support (go-to definition, autocomplete). Example translation class:
 
 ```typescript
 // translations/common/en.ts
@@ -527,7 +527,7 @@ export default class CommonTranslationsEn {
 		unauthorized: 'You are not authorized to perform this action',
 	};
 
-	// Метод плюрализации
+	// Pluralization method
 	items = (count: number) =>
 		count +
 		' ' +
@@ -538,16 +538,16 @@ export default class CommonTranslationsEn {
 }
 ```
 
-**Преимущества использования классов:**
+**Benefits of using classes:**
 
-- ✅ Полная типобезопасность TypeScript с поддержкой перехода к определению в IDE
-- ✅ Методы для плюрализации и динамических переводов
-- ✅ Лучшая организация кода и поддерживаемость
-- ✅ Валидация ключей переводов на этапе компиляции
+- ✅ Full TypeScript type safety with IDE go-to definition support
+- ✅ Methods for pluralization and dynamic translations
+- ✅ Better code organization and maintainability
+- ✅ Compile-time validation of translation keys
 
-## Примеры
+## Examples
 
-### Полный пример контроллера
+### Complete Controller Example
 
 ```typescript
 // app.controller.ts
@@ -585,7 +585,7 @@ export class AppController {
 }
 ```
 
-### Пример сервиса
+### Service Example
 
 ```typescript
 // app.service.ts
@@ -600,10 +600,10 @@ export class AppService {
 	) {}
 
 	async getGreeting() {
-		// Загрузка перевода
+		// Load translation
 		await this.i18nService.loadTranslation('common');
 
-		// Получение перевода
+		// Get translation
 		const translation = this.i18nService.getCurrentTranslation('common');
 
 		return translation?.greeting || 'Hello';
@@ -614,13 +614,13 @@ export class AppService {
 	}
 
 	async getLocalizedMessage(key: string) {
-		// Использование getTranslationByKey для строковых ключей
+		// Use getTranslationByKey for string keys
 		return this.i18nService.getTranslationByKey(`common.${key}`);
 	}
 }
 ```
 
-### Пример с плюрализацией
+### Pluralization Example
 
 ```typescript
 // translations/products/en.ts
@@ -632,7 +632,7 @@ export default class ProductsTranslationsEn {
 	title = 'Products';
 	addToCart = 'Add to Cart';
 
-	// Метод плюрализации
+	// Pluralization method
 	productCount = (count: number) =>
 		count +
 		' ' +
@@ -667,21 +667,21 @@ export class ProductsController {
 }
 ```
 
-## Предзагрузка переводов
+## Translation Preloading
 
-Модуль поддерживает предзагрузку переводов при инициализации. Это полезно для предварительной загрузки часто используемых переводов.
+The module supports translation preloading on initialization. This is useful for preloading frequently used translations.
 
-### Предзагрузка всех переводов
+### Preload All Translations
 
 ```typescript
 I18nModule.forRoot({
 	store,
 	defaultLocale: 'en',
-	preload: true, // Предзагрузить все namespace и локали
+	preload: true, // Preload all namespaces and locales
 });
 ```
 
-### Предзагрузка конкретных namespace
+### Preload Specific Namespaces
 
 ```typescript
 I18nModule.forRoot({
@@ -694,41 +694,41 @@ I18nModule.forRoot({
 });
 ```
 
-### Предзагрузка конкретных локалей
+### Preload Specific Locales
 
 ```typescript
 I18nModule.forRoot({
 	store,
 	defaultLocale: 'en',
 	preload: {
-		locales: ['en'], // Только английский
+		locales: ['en'], // English only
 	},
 });
 ```
 
-### Без предзагрузки
+### Without Preloading
 
 ```typescript
 I18nModule.forRoot({
 	store,
 	defaultLocale: 'en',
-	// preload не указан - переводы загружаются по требованию
+	// preload not specified - translations are loaded on demand
 });
 ```
 
-## Продвинутые сценарии
+## Advanced Scenarios
 
-### Работа с несколькими namespace
+### Working with Multiple Namespaces
 
 ```typescript
 @Controller()
 export class AppController {
 	@Get()
 	async getData(@I18n() i18n: I18nService) {
-		// Загрузка нескольких переводов
+		// Load multiple translations
 		await Promise.all([i18n.loadTranslation('common'), i18n.loadTranslation('errors'), i18n.loadTranslation('ui')]);
 
-		// Использование переводов
+		// Use translations
 		const common = i18n.getCurrentTranslation('common');
 		const errors = i18n.getCurrentTranslation('errors');
 		const ui = i18n.getCurrentTranslation('ui');
@@ -742,21 +742,21 @@ export class AppController {
 }
 ```
 
-### Использование getTranslationByKey для динамических ключей
+### Using getTranslationByKey for Dynamic Keys
 
 ```typescript
 @Controller()
 export class AppController {
 	@Get('messages/:key')
 	async getMessage(@Param('key') key: string, @I18n() i18n: I18nService) {
-		// Использование динамических ключей (с потерей типобезопасности)
+		// Use dynamic keys (with loss of type safety)
 		const message = i18n.getTranslationByKey(`common.${key}` as any);
 		return { message };
 	}
 }
 ```
 
-### Прямой доступ к store
+### Direct Store Access
 
 ```typescript
 @Controller()
@@ -765,7 +765,7 @@ export class AppController {
 	async getData(@I18n() i18n: I18nService) {
 		const store = i18n.getStore();
 
-		// Прямой доступ к store API
+		// Direct access to store API
 		store.changeLocale('ru');
 		await store.translations.common.load('ru');
 
@@ -778,7 +778,7 @@ export class AppController {
 
 ### `I18nModule`
 
-Глобальный NestJS модуль для интернационализации.
+Global NestJS module for internationalization.
 
 ```typescript
 I18nModule.forRoot<N, L, M>(options: I18nModuleOptions<N, L, M>): DynamicModule
@@ -786,7 +786,7 @@ I18nModule.forRoot<N, L, M>(options: I18nModuleOptions<N, L, M>): DynamicModule
 
 ### `I18nService`
 
-Сервис для работы с переводами и локалями.
+Service for working with translations and locales.
 
 ```typescript
 class I18nService<N, L, M> {
@@ -803,21 +803,21 @@ class I18nService<N, L, M> {
 
 ### `I18nInterceptor`
 
-Global interceptor, который автоматически определяет и устанавливает локаль из запроса. Регистрируется автоматически при использовании `I18nModule.forRoot()`.
+Global interceptor that automatically detects and sets locale from request. Registered automatically when using `I18nModule.forRoot()`.
 
 ### `I18nMiddleware`
 
-Альтернатива interceptor для установки локали из запроса. Можно использовать вручную:
+Alternative to interceptor for setting locale from request. Can be used manually:
 
 ```typescript
 consumer.apply(I18nMiddleware).forRoutes('*');
 ```
 
-### Декораторы
+### Decorators
 
 #### `@I18n()`
 
-Получает экземпляр I18nService.
+Gets the I18nService instance.
 
 ```typescript
 @Get()
@@ -829,7 +829,7 @@ async getData(@I18n() i18n: I18nService) {
 
 #### `@Locale()`
 
-Получает текущую локаль как строку.
+Gets the current locale as a string.
 
 ```typescript
 @Get()
@@ -840,7 +840,7 @@ async getData(@Locale() locale: string) {
 
 #### `@Translation(namespace)`
 
-Получает перевод для указанного namespace.
+Gets the translation for the specified namespace.
 
 ```typescript
 @Get()
@@ -849,27 +849,27 @@ async getData(@Translation('common') translation: CommonTranslationsEn) {
 }
 ```
 
-## Токены для dependency injection
+## Dependency Injection Tokens
 
-Библиотека экспортирует токены для использования в dependency injection:
+The library exports tokens for use in dependency injection:
 
-- `I18N_STORE` - Токен для translation store
-- `I18N_OPTIONS` - Токен для опций модуля
-- `I18N_SERVICE` - Токен для I18nService (рекомендуется использовать этот токен для инжекции сервиса)
+- `I18N_STORE` - Token for translation store
+- `I18N_OPTIONS` - Token for module options
+- `I18N_SERVICE` - Token for I18nService (recommended to use this token for service injection)
 
-## Лицензия
+## License
 
 MIT
 
-## Автор
+## Author
 
 Alexander Lvov
 
-## Репозиторий
+## Repository
 
 [GitHub](https://github.com/ialexanderlvov/i18n-typed-store)
 
-## Связанные пакеты
+## Related Packages
 
-- [i18n-typed-store](../i18n-typed-store/README.md) - Основная библиотека
-- [i18n-typed-store-react](../i18n-typed-store-react/README.md) - React интеграция
+- [i18n-typed-store](../i18n-typed-store/README.md) - Core library
+- [i18n-typed-store-react](../i18n-typed-store-react/README.md) - React integration
