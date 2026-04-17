@@ -1,6 +1,6 @@
 {
 	"name": "i18n-typed-store-nest",
-	"version": "0.3.2",
+	"version": "0.4.0",
 	"description": "Type-safe translation store for managing i18n locales with full TypeScript support",
 	"main": "dist/index.js",
 	"module": "dist/index.mjs",
@@ -45,7 +45,7 @@
 	"license": "MIT",
 	"type": "commonjs",
 	"dependencies": {
-		"i18n-typed-store": "0.3.0"
+		"i18n-typed-store": "workspace:*"
 	},
 	"peerDependencies": {
 		"@nestjs/common": "^10.0.0",
