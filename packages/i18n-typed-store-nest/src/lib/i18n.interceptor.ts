@@ -5,6 +5,13 @@ import { extractLocaleFromContext } from './utils';
 import { I18N_SERVICE, I18N_OPTIONS } from './tokens';
 import { I18nModuleOptions, I18nRequestContext } from '../types/types';
 
+declare module 'express' {
+	// Inject additional properties on express.Request
+	interface Request {
+		i18nService: I18nService;
+	}
+}
+
 /**
  * Interceptor for automatically detecting and setting locale from request
  */

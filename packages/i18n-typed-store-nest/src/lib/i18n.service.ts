@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { I18N_STORE, I18N_OPTIONS } from '..';
 import { I18nModuleOptions } from '../types/types';
 import { getTranslation, type GetTranslationValue, type TranslationKeys, type TranslationStore } from 'i18n-typed-store';
+import { I18N_OPTIONS, I18N_STORE } from './tokens';
 
 /**
  * Service for working with internationalization in NestJS
