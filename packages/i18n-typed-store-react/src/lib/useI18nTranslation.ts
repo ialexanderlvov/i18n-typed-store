@@ -76,5 +76,10 @@ export const useI18nTranslation = <
 		};
 	}, [store, namespace, fromCache]);
 
-	return namespaceState.translations[locale]?.namespace ?? namespaceState.currentTranslation;
+	// Strictly return the translation for the *active* locale. Falling back
+	// to `currentTranslation` (which holds whatever was loaded last) used to
+	// hide the loading state by serving a stale language — components would
+	// render English text while the user had already switched to Russian.
+	// Returning undefined lets consumers render a loader/skeleton instead.
+	return namespaceState.translations[locale]?.namespace;
 };

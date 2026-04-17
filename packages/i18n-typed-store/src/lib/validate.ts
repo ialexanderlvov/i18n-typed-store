@@ -34,7 +34,9 @@ export const validateFunction = (value: unknown, paramName: string): void => {
  * @throws {TypeError} If key is not present in the object
  */
 export const validateKeyInObject = (key: any, object: Record<string, unknown>, paramName: string, objectName: string): void => {
-	if (!(key in object)) {
+	// `in` traverses the prototype chain, so e.g. `__proto__` would pass.
+	// Restrict to own properties to prevent silent acceptance of dangerous keys.
+	if (!Object.prototype.hasOwnProperty.call(object, key as PropertyKey)) {
 		throw new TypeError(`${paramName} '${String(key)}' must be a key in ${objectName}`);
 	}
 };

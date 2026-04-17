@@ -60,7 +60,7 @@ export class I18nInterceptor implements NestInterceptor {
 		});
 
 		const locales = this.i18nService.getLocales();
-		const resolvedLocale = detectedLocale && detectedLocale in locales ? detectedLocale : undefined;
+		const resolvedLocale = detectedLocale && Object.prototype.hasOwnProperty.call(locales, detectedLocale) ? detectedLocale : undefined;
 
 		// If middleware already opened a scope for this request, just update
 		// the slot in place — same store keeps async work consistent.

@@ -101,8 +101,9 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 					emitter.off(changeLocaleEventName, listener);
 				},
 				changeLocale: (locale: keyof L) => {
-					// If locale is already a valid key, use it directly
-					if (locale in locales) {
+					// `in` walks the prototype chain — guard against keys like
+					// `__proto__` / `constructor` that would otherwise pass.
+					if (Object.prototype.hasOwnProperty.call(locales, locale as PropertyKey)) {
 						store.currentLocale = locale as keyof L;
 						emitter.emit(changeLocaleEventName, locale as keyof L);
 						return;
@@ -147,8 +148,10 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 						// Resolve locale to a valid key
 						let resolvedLocale: keyof L;
 
-						// If locale is already a valid key, use it directly
-						if (locale in locales) {
+						// Same prototype-chain caveat as in `changeLocale`: use
+						// `hasOwnProperty` so a malicious `?locale=__proto__`
+						// doesn't pass through to the module loader.
+						if (Object.prototype.hasOwnProperty.call(locales, locale as PropertyKey)) {
 							resolvedLocale = locale as keyof L;
 						} else {
 							// Try to find best matching locale using BCP 47 matching

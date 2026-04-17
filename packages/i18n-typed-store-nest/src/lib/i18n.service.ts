@@ -43,7 +43,7 @@ export class I18nService<
 			return explicit as keyof L;
 		}
 		const requestLocale = getRequestLocale();
-		if (requestLocale && requestLocale in this.store.locales) {
+		if (requestLocale && Object.prototype.hasOwnProperty.call(this.store.locales, requestLocale)) {
 			return requestLocale as keyof L;
 		}
 		return this.store.currentLocale;
@@ -60,7 +60,7 @@ export class I18nService<
 	 * @param locale - Locale to set
 	 */
 	setLocale(locale: keyof L): void {
-		if (!(locale in this.store.locales)) {
+		if (!Object.prototype.hasOwnProperty.call(this.store.locales, locale as PropertyKey)) {
 			throw new Error(`Invalid locale: '${String(locale)}' is not a valid locale key`);
 		}
 		this.store.changeLocale(locale);

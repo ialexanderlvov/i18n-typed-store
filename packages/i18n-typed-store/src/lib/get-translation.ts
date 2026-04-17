@@ -69,7 +69,9 @@ export function getTranslation<
 	const targetLocale = locale || store.currentLocale;
 	const namespaceKey = parts[0] as keyof N;
 
-	if (!(namespaceKey in store.translations)) {
+	// `in` walks the prototype chain, so a key like `__proto__` would
+	// erroneously match. `hasOwnProperty` keeps the lookup to real namespaces.
+	if (!Object.prototype.hasOwnProperty.call(store.translations, namespaceKey as PropertyKey)) {
 		return key as GetTranslationValue<M, Key>;
 	}
 
@@ -91,6 +93,13 @@ export function getTranslation<
 		}
 		const part = parts[i];
 		if (part === undefined) {
+			return key as GetTranslationValue<M, Key>;
+		}
+		// Only walk own enumerable properties. Without this guard, a key like
+		// `common.toString` or `common.__proto__.constructor` would resolve
+		// to inherited prototype members — leaking functions/objects to
+		// callers that pass user-controlled keys into `t()`.
+		if (!Object.prototype.hasOwnProperty.call(value, part)) {
 			return key as GetTranslationValue<M, Key>;
 		}
 		value = value[part];

@@ -55,7 +55,12 @@ export class I18nModule implements OnModuleInit {
 			provide: I18N_OPTIONS,
 			useValue: {
 				...options,
-				preload: options.preload ?? true, // Default to true if not specified
+				// Default to no preloading. Eagerly loading every (namespace × locale)
+				// combination can blow up cold-start time on serverless / large
+				// translation sets, and the docs already promised this default.
+				// Opt in with `preload: true` (or a granular config) when you
+				// actually want eager loading.
+				preload: options.preload ?? false,
 				availableLocales: options.availableLocales ?? Object.keys(options.store.locales),
 			} as typeof options,
 		};

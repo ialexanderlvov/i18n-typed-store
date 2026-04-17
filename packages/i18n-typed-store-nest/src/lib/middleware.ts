@@ -65,7 +65,7 @@ export class I18nMiddleware implements NestMiddleware {
 		});
 
 		const locales = this.i18nService.getLocales();
-		const resolvedLocale = detectedLocale && detectedLocale in locales ? detectedLocale : undefined;
+		const resolvedLocale = detectedLocale && Object.prototype.hasOwnProperty.call(locales, detectedLocale) ? detectedLocale : undefined;
 
 		// Run downstream handlers inside the per-request scope so that any
 		// async work they trigger sees the same locale.

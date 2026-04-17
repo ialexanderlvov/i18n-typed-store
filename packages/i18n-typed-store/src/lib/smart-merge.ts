@@ -48,6 +48,18 @@ export function smartDeepMerge(current: any, fallback: any): any {
 
 	// Add missing keys from fallback
 	for (const key in fallback) {
+		// Skip dangerous keys: assigning to `__proto__` swaps the result's
+		// prototype to attacker-controlled data, and `constructor`/`prototype`
+		// give an attacker a foothold for similar tricks. A malicious
+		// translation file (parsed via JSON.parse, which preserves these
+		// keys as own-properties) shouldn't be able to leak inherited
+		// values into consumers' code.
+		if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+			continue;
+		}
+		if (!Object.prototype.hasOwnProperty.call(fallback, key)) {
+			continue;
+		}
 		if (!(key in result)) {
 			// Key doesn't exist in current, add from fallback
 			result[key] = fallback[key];

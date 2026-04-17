@@ -108,7 +108,7 @@ describe('I18nModule', () => {
 			expect(module.exports).toContain(I18N_OPTIONS);
 		});
 
-		it('should set default preload to true', () => {
+		it('should default preload to false (cold-start safety; opt in for eager loading)', () => {
 			const store = createTestStore();
 			const options: I18nModuleOptions = {
 				store,
@@ -118,7 +118,7 @@ describe('I18nModule', () => {
 			const module = I18nModule.forRoot(options);
 			const optionsProvider = module.providers?.find((p: any) => p.provide === I18N_OPTIONS);
 
-			expect(optionsProvider?.useValue.preload).toBe(true);
+			expect(optionsProvider?.useValue.preload).toBe(false);
 		});
 
 		it('should set availableLocales from store if not provided', () => {
