@@ -1,10 +1,10 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useI18nTypedStoreContext } from './useI18nTypedStoreContext';
 
 /**
- * Hook for accessing translations with lazy loading and suspense support.
- * Throws a promise if translation is not yet loaded (for React Suspense).
- * Always returns a translation object (never undefined).
+ * Hook for accessing translations with lazy loading and Suspense support.
+ * Throws a Promise if the translation is not yet loaded so React Suspense
+ * can render the fallback. Always returns a translation object on resume.
  *
  * @template N - Type of namespaces object (e.g., { common: 'common', errors: 'errors' })
  * @template L - Type of locales object (e.g., { en: 'en', ru: 'ru' })
@@ -45,57 +45,65 @@ export const useI18nTranslationLazy = <
 
 	const namespaceState = store.translations[namespace];
 	const locale = store.currentLocale;
-	const [_, setUpdate] = useReducer(() => ({}), {});
+	const [, setUpdate] = useReducer(() => ({}), {});
 
-	const forceUpdate = () => {
-		setUpdate();
-	};
-
-	const load = async (needUpdate: boolean) => {
-		try {
-			await store.translations[namespace].load(store.currentLocale, fromCache);
-		} catch (error) {
-			throw error;
-		} finally {
-			if (needUpdate) {
-				forceUpdate();
-			}
-		}
-	};
+	const mountedRef = useRef(true);
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
 
 	useEffect(() => {
-		const listener = (locale: keyof L) => {
-			const namespaceState = store.translations[namespace];
-			if ((suspenseMode === 'first-load-locale' || suspenseMode === 'change-locale') && namespaceState.currentLocale !== locale) {
-				setUpdate();
+		let cancelled = false;
+
+		const triggerLoad = async () => {
+			try {
+				await store.translations[namespace].load(store.currentLocale, fromCache);
+			} finally {
+				if (!cancelled && mountedRef.current) {
+					setUpdate();
+				}
+			}
+		};
+
+		const listener = (changedLocale: keyof L) => {
+			const ns = store.translations[namespace];
+			// In suspense modes that show a fallback on locale change, just
+			// re-render so the throw path runs and Suspense kicks in.
+			if ((suspenseMode === 'first-load-locale' || suspenseMode === 'change-locale') && ns.currentLocale !== changedLocale) {
+				if (!cancelled && mountedRef.current) {
+					setUpdate();
+				}
 				return;
 			}
-			load(true);
+			void triggerLoad();
 		};
 		store.addChangeLocaleListener(listener);
+
+		// Backfill if not loaded yet (after Suspense resumes).
+		if (!store.translations[namespace].translations[store.currentLocale].namespace) {
+			void triggerLoad();
+		}
+
 		return () => {
+			cancelled = true;
 			store.removeChangeLocaleListener(listener);
 		};
-	}, [namespace, suspenseMode, fromCache]);
-
-	useEffect(() => {
-		const namespaceState = store.translations[namespace];
-		const locale = store.currentLocale;
-		if (!namespaceState.translations[locale].namespace) {
-			load(true);
-		}
-	}, [suspenseMode, namespace, fromCache, store.translations[namespace], store.currentLocale]);
+	}, [store, namespace, fromCache, suspenseMode]);
 
 	if (
-		(!namespaceState.translations[locale].namespace && suspenseMode === 'first-load-locale') ||
+		(!namespaceState.translations[locale]?.namespace && suspenseMode === 'first-load-locale') ||
 		(suspenseMode === 'change-locale' && namespaceState.currentLocale !== locale)
 	) {
-		throw load(false);
+		// Suspend until the load resolves; React will re-render after.
+		throw store.translations[namespace].load(locale, fromCache);
 	}
 
 	if (!namespaceState.currentTranslation) {
-		throw load(false);
+		throw store.translations[namespace].load(locale, fromCache);
 	}
 
-	return namespaceState.translations[locale].namespace || namespaceState.currentTranslation;
+	return (namespaceState.translations[locale]?.namespace ?? namespaceState.currentTranslation) as M[K];
 };

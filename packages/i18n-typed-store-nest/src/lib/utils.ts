@@ -1,4 +1,4 @@
-import type { I18nRequestContext } from './types/types';
+import type { I18nRequestContext } from '../types/types';
 
 /**
  * Extracts locale from request context

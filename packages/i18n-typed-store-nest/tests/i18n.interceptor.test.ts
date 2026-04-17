@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExecutionContext, CallHandler } from '@nestjs/common';
-import { of } from 'rxjs';
+import { defer, of } from 'rxjs';
 import { createTranslationStore } from 'i18n-typed-store';
-import { I18nModuleOptions, I18nService, I18nInterceptor } from '../src';
+import { I18nModuleOptions, I18nService, I18nInterceptor, getRequestLocale } from '../src';
 
 describe('I18nInterceptor', () => {
 	const namespaces = { common: 'common' } as const;
@@ -35,26 +35,28 @@ describe('I18nInterceptor', () => {
 			...options,
 		};
 
-		// Create interceptor with mocked dependencies
 		const interceptor = new I18nInterceptor(service, interceptorOptions);
 
 		return { interceptor, service, store };
 	};
 
-	const createExecutionContext = (request: any): ExecutionContext => {
-		return {
-			switchToHttp: () => ({
-				getRequest: () => request,
-				getResponse: () => ({}),
-			}),
-		} as ExecutionContext;
-	};
+	const createExecutionContext = (request: any): ExecutionContext =>
+		({
+			switchToHttp: () => ({ getRequest: () => request, getResponse: () => ({}) }),
+		}) as ExecutionContext;
 
-	const createCallHandler = (): CallHandler => {
-		return {
-			handle: () => of({}),
-		} as CallHandler;
-	};
+	/**
+	 * Returns a CallHandler whose `handle()` lazily reads the locale from the
+	 * current ALS scope, mimicking what a controller would do.
+	 */
+	const createCapturingHandler = (capture: { locale?: string; requestLocale?: string }, service: I18nService): CallHandler => ({
+		handle: () =>
+			defer(() => {
+				capture.locale = String(service.getLocale());
+				capture.requestLocale = getRequestLocale();
+				return of({});
+			}),
+	});
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -64,140 +66,81 @@ describe('I18nInterceptor', () => {
 		const { interceptor, service } = createTestInterceptor();
 		const request: any = {};
 		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, { handle: () => of({}) }).subscribe();
 
 		expect(request.i18nService).toBe(service);
 	});
 
-	it('should extract locale from query parameter', () => {
+	it('should expose query-locale to the handler scope', () => {
 		const { interceptor, service } = createTestInterceptor();
-		const request: any = {
-			query: { locale: 'ru' },
-			headers: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ query: { locale: 'ru' }, headers: {}, cookies: {}, params: {} });
+		const capture: { locale?: string; requestLocale?: string } = {};
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, createCapturingHandler(capture, service)).subscribe();
 
-		expect(service.getLocale()).toBe('ru');
+		expect(capture.locale).toBe('ru');
+		expect(capture.requestLocale).toBe('ru');
 	});
 
-	it('should extract locale from cookie', () => {
+	it('should expose cookie locale to the handler scope', () => {
 		const { interceptor, service } = createTestInterceptor();
-		const request: any = {
-			cookies: { locale: 'ru' },
-			headers: {},
-			query: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ cookies: { locale: 'ru' }, headers: {}, query: {}, params: {} });
+		const capture: { locale?: string; requestLocale?: string } = {};
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, createCapturingHandler(capture, service)).subscribe();
 
-		expect(service.getLocale()).toBe('ru');
+		expect(capture.locale).toBe('ru');
 	});
 
-	it('should extract locale from header', () => {
+	it('should expose header locale to the handler scope', () => {
 		const { interceptor, service } = createTestInterceptor();
-		const request: any = {
-			headers: { 'accept-language': 'ru' },
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ headers: { 'accept-language': 'ru' }, query: {}, cookies: {}, params: {} });
+		const capture: { locale?: string; requestLocale?: string } = {};
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, createCapturingHandler(capture, service)).subscribe();
 
-		expect(service.getLocale()).toBe('ru');
+		expect(capture.locale).toBe('ru');
 	});
 
-	it('should use default locale if no locale found', () => {
+	it('should fall back to default locale when no signal is present', () => {
 		const { interceptor, service } = createTestInterceptor({ defaultLocale: 'ru' });
-		const request: any = {
-			headers: {},
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ headers: {}, query: {}, cookies: {}, params: {} });
+		const capture: { locale?: string; requestLocale?: string } = {};
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, createCapturingHandler(capture, service)).subscribe();
 
-		expect(service.getLocale()).toBe('ru');
+		expect(capture.locale).toBe('ru');
+		expect(capture.requestLocale).toBe('ru');
 	});
 
-	it('should not set locale if extracted locale is not in available locales', () => {
+	it('should ignore locales not in availableLocales', () => {
 		const { interceptor, service } = createTestInterceptor();
-		service.setLocale('en');
-		const request: any = {
-			query: { locale: 'de' },
-			headers: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ query: { locale: 'de' }, headers: {}, cookies: {}, params: {} });
+		const capture: { locale?: string; requestLocale?: string } = {};
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, createCapturingHandler(capture, service)).subscribe();
 
-		expect(service.getLocale()).toBe('en');
+		// 'de' is rejected, so detection falls back to defaultLocale 'en',
+		// which IS valid and gets bound as the request locale.
+		expect(capture.locale).toBe('en');
+		expect(capture.requestLocale).toBe('en');
 	});
 
-	it('should set locale when extracted locale is valid (covers lines 54-58)', () => {
+	it('should not leak locale outside the observable scope', () => {
 		const { interceptor, service } = createTestInterceptor();
-		service.setLocale('en');
-		const request: any = {
-			query: { locale: 'ru' },
-			headers: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ query: { locale: 'ru' }, headers: {}, cookies: {}, params: {} });
 
-		interceptor.intercept(ctx, handler).subscribe();
+		interceptor.intercept(ctx, { handle: () => of({}) }).subscribe();
 
-		// This covers lines 54-58: if (locale) { ... if (locale in locales) { setLocale } }
-		expect(service.getLocale()).toBe('ru');
-	});
-
-	it('should not set locale when extracted locale is undefined (covers line 54)', () => {
-		const { interceptor, service } = createTestInterceptor();
-		service.setLocale('en');
-		const request: any = {
-			headers: {},
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
-
-		interceptor.intercept(ctx, handler).subscribe();
-
-		// This covers line 54: if (locale) - when locale is undefined, the block is skipped
+		// Outside the ALS scope, the singleton default is unchanged.
 		expect(service.getLocale()).toBe('en');
 	});
 
 	it('should call next handler', async () => {
 		const { interceptor } = createTestInterceptor();
-		const request: any = {
-			headers: {},
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const ctx = createExecutionContext(request);
-		const handler = createCallHandler();
+		const ctx = createExecutionContext({ headers: {}, query: {}, cookies: {}, params: {} });
+		const handler: CallHandler = { handle: () => of({}) };
 		const handleSpy = vi.spyOn(handler, 'handle');
 
 		await new Promise<void>((resolve) => {
@@ -208,5 +151,29 @@ describe('I18nInterceptor', () => {
 				},
 			});
 		});
+	});
+
+	it('should isolate locales across concurrent intercepts (no race condition)', async () => {
+		const { interceptor, service } = createTestInterceptor();
+		const seen: Record<string, string> = {};
+
+		const run = (id: string, locale: string) =>
+			new Promise<void>((resolve) => {
+				const ctx = createExecutionContext({ query: { locale }, headers: {}, cookies: {}, params: {} });
+				const handler: CallHandler = {
+					handle: () =>
+						defer(async () => {
+							await new Promise((r) => setTimeout(r, 0));
+							seen[id] = String(service.getLocale());
+							return {};
+						}),
+				};
+				interceptor.intercept(ctx, handler).subscribe({ complete: () => resolve() });
+			});
+
+		await Promise.all([run('a', 'ru'), run('b', 'en')]);
+
+		expect(seen.a).toBe('ru');
+		expect(seen.b).toBe('en');
 	});
 });

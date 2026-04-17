@@ -177,7 +177,7 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 						const shouldUseCache = namespaceState.namespace && fromCache !== false;
 						if (shouldUseCache) {
 							store.translations[namespaceKey].currentTranslation = namespaceState.namespace;
-							store.translations[namespaceKey].currentLocale = locale;
+							store.translations[namespaceKey].currentLocale = resolvedLocale;
 							return;
 						}
 

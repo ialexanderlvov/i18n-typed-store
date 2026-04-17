@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { I18nMiddleware, I18nModuleOptions, I18nService } from '../src';
+import { I18nMiddleware, I18nModuleOptions, I18nService, getRequestLocale } from '../src';
 import { createTranslationStore } from 'i18n-typed-store';
 
 describe('I18nMiddleware', () => {
@@ -38,6 +38,23 @@ describe('I18nMiddleware', () => {
 		return { middleware, service, store };
 	};
 
+	/**
+	 * Helper that runs `next` synchronously inside the middleware's ALS scope
+	 * and captures `service.getLocale()` from within that scope, since the
+	 * locale is now request-scoped (not a singleton mutation).
+	 */
+	const captureLocaleInScope = (middleware: I18nMiddleware, service: I18nService, req: any) => {
+		let captured: string | undefined;
+		let requestLocale: string | undefined;
+		let nextCalled = false;
+		middleware.use(req, {}, () => {
+			nextCalled = true;
+			captured = String(service.getLocale());
+			requestLocale = getRequestLocale();
+		});
+		return { captured, requestLocale, nextCalled };
+	};
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -45,136 +62,98 @@ describe('I18nMiddleware', () => {
 	it('should attach I18nService to request', () => {
 		const { middleware, service } = createTestMiddleware();
 		const req: any = {};
-		const res: any = {};
 		const next = vi.fn();
 
-		middleware.use(req, res, next);
+		middleware.use(req, {}, next);
 
 		expect(req.i18nService).toBe(service);
 		expect(next).toHaveBeenCalled();
 	});
 
-	it('should extract locale from query parameter', () => {
+	it('should expose locale from query parameter to handler scope', () => {
 		const { middleware, service } = createTestMiddleware();
-		const req: any = {
-			query: { locale: 'ru' },
-			headers: {},
-			cookies: {},
-			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
+		const req: any = { query: { locale: 'ru' }, headers: {}, cookies: {}, params: {} };
 
-		middleware.use(req, res, next);
+		const { captured, requestLocale, nextCalled } = captureLocaleInScope(middleware, service, req);
 
-		expect(service.getLocale()).toBe('ru');
-		expect(next).toHaveBeenCalled();
+		expect(captured).toBe('ru');
+		expect(requestLocale).toBe('ru');
+		expect(nextCalled).toBe(true);
 	});
 
-	it('should extract locale from cookie', () => {
+	it('should expose locale from cookie to handler scope', () => {
 		const { middleware, service } = createTestMiddleware();
-		const req: any = {
-			cookies: { locale: 'ru' },
-			headers: {},
-			query: {},
-			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
+		const req: any = { cookies: { locale: 'ru' }, headers: {}, query: {}, params: {} };
 
-		middleware.use(req, res, next);
+		const { captured } = captureLocaleInScope(middleware, service, req);
 
-		expect(service.getLocale()).toBe('ru');
-		expect(next).toHaveBeenCalled();
+		expect(captured).toBe('ru');
 	});
 
-	it('should extract locale from header', () => {
+	it('should expose locale from header to handler scope', () => {
 		const { middleware, service } = createTestMiddleware();
-		const req: any = {
-			headers: { 'accept-language': 'ru' },
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
+		const req: any = { headers: { 'accept-language': 'ru' }, query: {}, cookies: {}, params: {} };
 
-		middleware.use(req, res, next);
+		const { captured } = captureLocaleInScope(middleware, service, req);
 
-		expect(service.getLocale()).toBe('ru');
-		expect(next).toHaveBeenCalled();
+		expect(captured).toBe('ru');
 	});
 
-	it('should use default locale if no locale found', () => {
+	it('should fall back to default locale when no header/query/cookie provided', () => {
 		const { middleware, service } = createTestMiddleware({ defaultLocale: 'ru' });
-		const req: any = {
-			headers: {},
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
+		const req: any = { headers: {}, query: {}, cookies: {}, params: {} };
 
-		middleware.use(req, res, next);
+		const { captured, requestLocale } = captureLocaleInScope(middleware, service, req);
 
-		expect(service.getLocale()).toBe('ru');
-		expect(next).toHaveBeenCalled();
+		expect(captured).toBe('ru');
+		expect(requestLocale).toBe('ru');
 	});
 
-	it('should not set locale if extracted locale is not in available locales', () => {
+	it('should ignore locales that are not in availableLocales', () => {
 		const { middleware, service } = createTestMiddleware();
-		service.setLocale('en');
-		const req: any = {
-			query: { locale: 'de' },
-			headers: {},
-			cookies: {},
-			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
+		const req: any = { query: { locale: 'de' }, headers: {}, cookies: {}, params: {} };
 
-		middleware.use(req, res, next);
+		const { captured, requestLocale } = captureLocaleInScope(middleware, service, req);
 
-		expect(service.getLocale()).toBe('en');
-		expect(next).toHaveBeenCalled();
+		// 'de' is not in availableLocales, so locale detection falls back to
+		// the configured defaultLocale ('en'), which is valid and gets bound
+		// to the request scope.
+		expect(captured).toBe('en');
+		expect(requestLocale).toBe('en');
 	});
 
-	it('should set locale when extracted locale is valid (covers lines 67-71)', () => {
+	it('should not leak locale outside the request scope (per-request isolation)', () => {
 		const { middleware, service } = createTestMiddleware();
-		service.setLocale('en');
-		const req: any = {
+
+		captureLocaleInScope(middleware, service, {
 			query: { locale: 'ru' },
 			headers: {},
 			cookies: {},
 			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
+		});
 
-		middleware.use(req, res, next);
-
-		// This covers lines 67-71: if (locale) { ... if (locale in locales) { setLocale } }
-		expect(service.getLocale()).toBe('ru');
-		expect(next).toHaveBeenCalled();
+		// Outside the ALS scope the singleton is unchanged.
+		expect(service.getLocale()).toBe('en');
 	});
 
-	it('should not set locale when extracted locale is undefined (covers line 67)', () => {
+	it('should isolate concurrent requests (no race condition)', async () => {
 		const { middleware, service } = createTestMiddleware();
-		service.setLocale('en');
-		const req: any = {
-			headers: {},
-			query: {},
-			cookies: {},
-			params: {},
-		};
-		const res: any = {};
-		const next = vi.fn();
 
-		middleware.use(req, res, next);
+		const seen: Record<string, string> = {};
 
-		// This covers line 67: if (locale) - when locale is undefined, the block is skipped
-		expect(service.getLocale()).toBe('en');
-		expect(next).toHaveBeenCalled();
+		const handle = (id: string, locale: string) =>
+			new Promise<void>((resolve) => {
+				middleware.use({ query: { locale }, headers: {}, cookies: {}, params: {} } as any, {} as any, async () => {
+					// Yield to the event loop so the other request runs interleaved.
+					await new Promise((r) => setTimeout(r, 0));
+					seen[id] = String(service.getLocale());
+					resolve();
+				});
+			});
+
+		await Promise.all([handle('a', 'ru'), handle('b', 'en')]);
+
+		expect(seen.a).toBe('ru');
+		expect(seen.b).toBe('en');
 	});
 });

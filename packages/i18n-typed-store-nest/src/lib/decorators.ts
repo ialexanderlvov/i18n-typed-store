@@ -1,16 +1,15 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { I18nService } from './i18n.service';
+import { getRequestLocale } from './request-context';
 
 /**
- * Helper function to get I18nService from request object
+ * Resolves the active `I18nService`.
  *
- * The service is attached to the request by I18nInterceptor or I18nMiddleware.
- * This is a common pattern in NestJS for parameter decorators (used by @nestjs/passport),
- * where services need to be accessed in decorators that run during request processing.
+ * Tries `req.i18nService` first (attached by `I18nMiddleware` /
+ * `I18nInterceptor`). Falls back to throwing a descriptive error so the
+ * caller knows to wire up the module.
  *
- * Alternative approach: Inject I18nService directly in controller constructor instead of using decorators.
- *
- * @internal Exported for testing purposes only
+ * @internal Exported for testing purposes only.
  */
 export function getI18nService(ctx: ExecutionContext): I18nService {
 	const request = ctx.switchToHttp().getRequest();
@@ -26,16 +25,13 @@ export function getI18nService(ctx: ExecutionContext): I18nService {
 }
 
 /**
- * Decorator for getting internationalization service in controllers/services
- *
- * Gets the service from request object (attached by I18nInterceptor or I18nMiddleware).
+ * Decorator for getting internationalization service in controllers/services.
  *
  * @example
  * ```ts
  * @Get()
  * async getData(@I18n() i18n: I18nService) {
- *   const translation = i18n.getTranslation('common');
- *   return translation?.greeting;
+ *   return i18n.getTranslationByKey('common.greeting');
  * }
  * ```
  */
@@ -44,7 +40,11 @@ export const I18n = createParamDecorator((_: unknown, ctx: ExecutionContext): I1
 });
 
 /**
- * Decorator for getting current locale
+ * Decorator for getting the locale resolved for the current request.
+ *
+ * Reads the per-request locale (set by middleware/interceptor) so it stays
+ * correct under concurrent requests. Falls back to the service's current
+ * locale when no request-scoped locale is bound.
  *
  * @example
  * ```ts
@@ -55,12 +55,20 @@ export const I18n = createParamDecorator((_: unknown, ctx: ExecutionContext): I1
  * ```
  */
 export const Locale = createParamDecorator((_: unknown, ctx: ExecutionContext): string => {
+	const requestLocale = getRequestLocale();
+	if (requestLocale) {
+		return requestLocale;
+	}
 	const i18nService = getI18nService(ctx);
 	return String(i18nService.getLocale());
 });
 
 /**
- * Decorator for getting translation for the specified namespace
+ * Decorator for getting translation for the specified namespace.
+ *
+ * The decorator returns a Promise that Nest will await before invoking the
+ * route handler, so the parameter receives the resolved translation object.
+ * Uses the per-request locale automatically.
  *
  * @param namespace - Namespace key
  *
@@ -73,7 +81,7 @@ export const Locale = createParamDecorator((_: unknown, ctx: ExecutionContext): 
  * ```
  */
 export const Translation = (namespace: string) =>
-	createParamDecorator((_: unknown, ctx: ExecutionContext) => {
+	createParamDecorator((data: string, ctx: ExecutionContext) => {
 		const i18nService = getI18nService(ctx);
-		return i18nService.getTranslation(namespace);
+		return i18nService.getTranslation(data);
 	})(namespace);

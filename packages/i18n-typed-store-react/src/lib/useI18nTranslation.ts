@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useI18nTypedStoreContext } from './useI18nTypedStoreContext';
 
 /**
@@ -31,45 +31,50 @@ export const useI18nTranslation = <
 	namespace: K,
 	fromCache: boolean = true,
 ): M[K] | undefined => {
-	const { store, suspenseMode } = useI18nTypedStoreContext<N, L, M>();
+	const { store } = useI18nTypedStoreContext<N, L, M>();
 
 	const namespaceState = store.translations[namespace];
 	const locale = store.currentLocale;
-	const [_, setUpdate] = useReducer(() => ({}), {});
+	const [, setUpdate] = useReducer(() => ({}), {});
 
-	const forceUpdate = () => {
-		setUpdate();
-	};
-
-	const load = async (needUpdate: boolean) => {
-		try {
-			await store.translations[namespace].load(store.currentLocale, fromCache);
-		} catch (error) {
-			throw error;
-		} finally {
-			if (needUpdate) {
-				forceUpdate();
-			}
-		}
-	};
+	// Tracks whether the component is still mounted so we don't call setState
+	// after unmount (otherwise async loads that resolve post-unmount log warnings).
+	const mountedRef = useRef(true);
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
 
 	useEffect(() => {
+		let cancelled = false;
+
+		const triggerLoad = async () => {
+			try {
+				await store.translations[namespace].load(store.currentLocale, fromCache);
+			} finally {
+				if (!cancelled && mountedRef.current) {
+					setUpdate();
+				}
+			}
+		};
+
+		// Initial load if the current locale's translation is missing.
+		if (!store.translations[namespace].translations[store.currentLocale].namespace) {
+			void triggerLoad();
+		}
+
 		const listener = () => {
-			load(true);
+			void triggerLoad();
 		};
 		store.addChangeLocaleListener(listener);
+
 		return () => {
+			cancelled = true;
 			store.removeChangeLocaleListener(listener);
 		};
-	}, [namespace, fromCache]);
+	}, [store, namespace, fromCache]);
 
-	useEffect(() => {
-		const namespaceState = store.translations[namespace];
-		const locale = store.currentLocale;
-		if (!namespaceState.translations[locale].namespace) {
-			load(true);
-		}
-	}, [suspenseMode, namespace, fromCache, store.translations[namespace], store.currentLocale]);
-
-	return namespaceState.translations[locale].namespace || namespaceState.currentTranslation;
+	return namespaceState.translations[locale]?.namespace ?? namespaceState.currentTranslation;
 };
