@@ -1,8 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
-import { Suspense } from 'react';
+import { render, renderHook, act, waitFor, screen } from '@testing-library/react';
+import { StrictMode, Suspense, Component, type ReactNode } from 'react';
 import { I18nTypedStoreProvider, useI18nTranslationLazy } from '../src/index';
 import { createTranslationStore } from 'i18n-typed-store';
+
+class ErrorBoundary extends Component<{ children: ReactNode; onError?: (error: unknown) => void }, { hasError: boolean }> {
+	state = { hasError: false };
+	static getDerivedStateFromError() {
+		return { hasError: true };
+	}
+	componentDidCatch(error: unknown) {
+		this.props.onError?.(error);
+	}
+	render() {
+		return this.state.hasError ? null : this.props.children;
+	}
+}
 
 describe('useI18nTranslationLazy', () => {
 	const namespaces = { common: 'common', errors: 'errors' } as const;
@@ -400,9 +413,11 @@ describe('useI18nTranslationLazy', () => {
 		).toBe(true);
 	});
 
-	it('should throw error when translation loading fails (covers line 58: throw error)', async () => {
-		// This test covers line 58: throw error;
-		// Create a store where loading 'ru' locale throws an error
+	it('should keep serving the previous translation when switching to a failing locale in "once" mode', async () => {
+		// Rewritten for the documented "once" semantics: suspense happens only
+		// while there is no data at all. After the first translation rendered,
+		// a switch to a failing locale degrades to the previous translation (the
+		// failure is recorded in store state) instead of suspending or crashing.
 		const loadError = new Error('Failed to load translation');
 		const loadModule = vi.fn(async (locale: string) => {
 			if (locale === 'ru') {
@@ -427,10 +442,21 @@ describe('useI18nTranslationLazy', () => {
 			await store.translations.common.load('en');
 		});
 
+		const caughtErrors: unknown[] = [];
+		const previousRejectionListeners = process.listeners('unhandledRejection');
+		process.removeAllListeners('unhandledRejection');
+		const unhandledRejections: unknown[] = [];
+		const rejectionHandler = (reason: unknown) => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', rejectionHandler);
+
 		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
 			wrapper: ({ children }) => (
 				<I18nTypedStoreProvider store={store} suspenseMode="once">
-					{children}
+					<ErrorBoundary onError={(error) => caughtErrors.push(error)}>
+						<Suspense fallback={null}>{children}</Suspense>
+					</ErrorBoundary>
 				</I18nTypedStoreProvider>
 			),
 		});
@@ -443,39 +469,163 @@ describe('useI18nTranslationLazy', () => {
 
 		expect(result.current.greeting).toBe('Hello');
 
-		// Handle unhandled promise rejections
-		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const originalOnUnhandledRejection = process.listeners('unhandledRejection');
-		process.removeAllListeners('unhandledRejection');
-
-		// Add a handler to catch unhandled rejections (which will occur from line 58)
-		const unhandledRejections: unknown[] = [];
-		const rejectionHandler = (reason: unknown) => {
-			unhandledRejections.push(reason);
-		};
-		process.on('unhandledRejection', rejectionHandler);
-
-		// Change locale to 'ru' which will cause load to throw error
-		// The error will be caught in the hook's load function and rethrown via "throw error;" on line 58
 		await act(async () => {
 			store.changeLocale('ru');
-			// Wait for the load attempt
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		});
 
-		// Give a moment for unhandled rejection to be captured
-		await new Promise((resolve) => setTimeout(resolve, 50));
-
-		// Verify that an unhandled rejection occurred (proving line 58 executed)
-		expect(unhandledRejections.length).toBeGreaterThan(0);
-		expect(unhandledRejections[0]).toBe(loadError);
-
-		// Verify error state is set
+		// The failing load was attempted and its error state recorded...
 		expect(store.translations.common.translations.ru.isError).toBe(true);
+		// ...while the hook kept rendering the previous translation instead of
+		// suspending or throwing (there IS data to show).
+		expect(result.current.greeting).toBe('Hello');
+		expect(caughtErrors).toEqual([]);
+		// The background load's rejection was handled inside the hook.
+		expect(unhandledRejections).toEqual([]);
 
-		// Cleanup
 		process.removeListener('unhandledRejection', rejectionHandler);
-		originalOnUnhandledRejection.forEach((listener) => process.on('unhandledRejection', listener as any));
+		previousRejectionListeners.forEach((listener) => process.on('unhandledRejection', listener as any));
+	});
+
+	it('should not leak locale listeners under StrictMode double mounting', async () => {
+		const store = createTestStore();
+		await act(async () => {
+			await store.translations.common.load('en');
+		});
+
+		// Count net subscriptions through the store's public listener API.
+		let added = 0;
+		let removed = 0;
+		const originalAdd = store.addChangeLocaleListener;
+		const originalRemove = store.removeChangeLocaleListener;
+		store.addChangeLocaleListener = (listener) => {
+			added += 1;
+			originalAdd(listener);
+		};
+		store.removeChangeLocaleListener = (listener) => {
+			removed += 1;
+			originalRemove(listener);
+		};
+
+		const { result, unmount } = renderHook(() => useI18nTranslationLazy('common'), {
+			wrapper: ({ children }) => (
+				<StrictMode>
+					<I18nTypedStoreProvider store={store} suspenseMode="once">
+						{children}
+					</I18nTypedStoreProvider>
+				</StrictMode>
+			),
+		});
+
+		// The hook still works through StrictMode's mount/unmount/remount cycle.
+		await act(async () => {
+			await waitFor(() => {
+				expect(result.current.greeting).toBe('Hello');
+			});
+		});
+
+		unmount();
+
+		// Every subscription created by the double mount was cleaned up.
+		expect(added).toBeGreaterThan(0);
+		expect(removed).toBe(added);
+	});
+
+	it('should not suspend on subsequent locale changes in "once" mode', async () => {
+		const store = createTestStore();
+
+		let fallbackRenders = 0;
+		const Fallback = () => {
+			fallbackRenders += 1;
+			return <div data-testid="fallback">Loading...</div>;
+		};
+
+		const Consumer = () => {
+			const translations = useI18nTranslationLazy('common');
+			return <div data-testid="content">{translations.greeting}</div>;
+		};
+
+		render(
+			<I18nTypedStoreProvider store={store} suspenseMode="once">
+				<Suspense fallback={<Fallback />}>
+					<Consumer />
+				</Suspense>
+			</I18nTypedStoreProvider>,
+		);
+
+		// Very first load: no data at all, so the hook suspends once.
+		await waitFor(() => {
+			expect(screen.getByTestId('content').textContent).toBe('Hello');
+		});
+		const fallbacksAfterFirstLoad = fallbackRenders;
+		expect(fallbacksAfterFirstLoad).toBeGreaterThan(0);
+
+		await act(async () => {
+			store.changeLocale('ru');
+		});
+
+		// While 'ru' loads in the background the previous translation stays on
+		// screen — the Suspense fallback is NOT shown again.
+		expect(screen.queryByTestId('fallback')).toBeNull();
+		expect(screen.getByTestId('content').textContent).toBe('Hello');
+
+		// The new locale is swapped in once its load finishes.
+		await waitFor(() => {
+			expect(screen.getByTestId('content').textContent).toBe('Привет');
+		});
+		expect(fallbackRenders).toBe(fallbacksAfterFirstLoad);
+	});
+
+	it('should throw the load error (never return undefined) when the very first load fails', async () => {
+		// suspenseMode='first-load-locale', the first load fails, and there is no
+		// previous translation to degrade to: the hook must throw the load error
+		// itself so an ErrorBoundary catches it. Returning undefined would violate
+		// the M[K] return type contract.
+		const loadError = new Error('Failed to load translation');
+		const loadModule = vi.fn(async () => {
+			throw loadError;
+		});
+
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: any) => module,
+			defaultLocale: 'en',
+		});
+
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+
+		const caughtErrors: unknown[] = [];
+		const renderedValues: unknown[] = [];
+
+		const Consumer = () => {
+			const translations = useI18nTranslationLazy('common');
+			renderedValues.push(translations);
+			return <div data-testid="content">{translations.greeting}</div>;
+		};
+
+		// React logs boundary-caught errors via console.error; keep output clean.
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(
+			<I18nTypedStoreProvider store={store} suspenseMode="first-load-locale">
+				<ErrorBoundary onError={(error) => caughtErrors.push(error)}>
+					<Suspense fallback={<div data-testid="fallback">Loading...</div>}>
+						<Consumer />
+					</Suspense>
+				</ErrorBoundary>
+			</I18nTypedStoreProvider>,
+		);
+
+		// The actual load error reaches the ErrorBoundary.
+		await waitFor(() => {
+			expect(caughtErrors).toContain(loadError);
+		});
+
+		// The component never rendered with undefined translations.
+		expect(renderedValues).not.toContain(undefined);
+
 		consoleErrorSpy.mockRestore();
 	});
 });

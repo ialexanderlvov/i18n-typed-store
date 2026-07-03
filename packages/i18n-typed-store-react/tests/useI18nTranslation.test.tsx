@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
-import { I18nTypedStoreProvider, useI18nTranslation } from '../src/index';
+import { render, renderHook, act, waitFor, screen } from '@testing-library/react';
+import { StrictMode, startTransition } from 'react';
+import { I18nTypedStoreProvider, useI18nTranslation, useI18nLocale } from '../src/index';
 import { createTranslationStore } from 'i18n-typed-store';
 
 describe('useI18nTranslation', () => {
@@ -176,9 +177,11 @@ describe('useI18nTranslation', () => {
 		});
 	});
 
-	it('should throw error when translation loading fails (covers line 48: throw error)', async () => {
-		// This test covers line 48: throw error;
-		// The error is thrown from the hook's internal load function when store.load() fails
+	it('should keep returning undefined and record the error state when loading fails', async () => {
+		// Rewritten for the useSyncExternalStore implementation: the hook now
+		// handles the load rejection internally (the failure is reflected in the
+		// store's `isError` flag) instead of leaking it as an unhandled promise
+		// rejection like the old useEffect-based implementation did.
 		const loadError = new Error('Failed to load translation');
 		const loadModule = vi.fn(async () => {
 			throw loadError;
@@ -194,42 +197,113 @@ describe('useI18nTranslation', () => {
 
 		const store = storeFactory.type<{ common: { greeting: string } }>();
 
-		// Verify that store.load throws error directly (this helps ensure error path is testable)
-		await expect(store.translations.common.load('en')).rejects.toThrow('Failed to load translation');
-		expect(store.translations.common.translations.en.isError).toBe(true);
-
-		// For the hook test, we need to handle unhandled promise rejections
-		// since the error from line 48 will propagate as an unhandled promise rejection
-		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const originalOnUnhandledRejection = process.listeners('unhandledRejection');
+		const previousRejectionListeners = process.listeners('unhandledRejection');
 		process.removeAllListeners('unhandledRejection');
-
-		// Add a handler to catch unhandled rejections (which will occur from line 48)
 		const unhandledRejections: unknown[] = [];
-		process.on('unhandledRejection', (reason) => {
+		const rejectionHandler = (reason: unknown) => {
 			unhandledRejections.push(reason);
-		});
+		};
+		process.on('unhandledRejection', rejectionHandler);
 
 		const { result } = renderHook(() => useI18nTranslation('common'), {
 			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
 		});
 
-		// Wait for effects to attempt loading (which will fail and trigger line 48)
+		// Wait for the subscription to attempt (and fail) the load.
 		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 150));
+			await new Promise((resolve) => setTimeout(resolve, 100));
 		});
 
-		// Verify that an unhandled rejection occurred (proving line 48 executed)
-		expect(unhandledRejections.length).toBeGreaterThan(0);
-		expect(unhandledRejections[0]).toBe(loadError);
-
-		// Verify error state is set
+		// The failing load was attempted, its error state recorded, and the hook
+		// keeps returning undefined so consumers can render a fallback.
+		expect(loadModule).toHaveBeenCalled();
 		expect(store.translations.common.translations.en.isError).toBe(true);
 		expect(result.current).toBeUndefined();
 
-		// Cleanup
-		process.removeAllListeners('unhandledRejection');
-		originalOnUnhandledRejection.forEach((listener) => process.on('unhandledRejection', listener as any));
-		consoleErrorSpy.mockRestore();
+		// The rejection was handled inside the hook — no unhandled rejection leaks.
+		expect(unhandledRejections).toEqual([]);
+
+		process.removeListener('unhandledRejection', rejectionHandler);
+		previousRejectionListeners.forEach((listener) => process.on('unhandledRejection', listener as any));
+	});
+
+	it('should not leak locale listeners under StrictMode double mounting', async () => {
+		const store = createTestStore();
+
+		// Count net subscriptions through the store's public listener API.
+		let added = 0;
+		let removed = 0;
+		const originalAdd = store.addChangeLocaleListener;
+		const originalRemove = store.removeChangeLocaleListener;
+		store.addChangeLocaleListener = (listener) => {
+			added += 1;
+			originalAdd(listener);
+		};
+		store.removeChangeLocaleListener = (listener) => {
+			removed += 1;
+			originalRemove(listener);
+		};
+
+		const { result, unmount } = renderHook(() => useI18nTranslation('common'), {
+			wrapper: ({ children }) => (
+				<StrictMode>
+					<I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>
+				</StrictMode>
+			),
+		});
+
+		// The hook still works through StrictMode's mount/unmount/remount cycle.
+		await waitFor(() => {
+			expect(result.current?.greeting).toBe('Hello');
+		});
+
+		unmount();
+
+		// Every subscription created by the double mount was cleaned up.
+		expect(added).toBeGreaterThan(0);
+		expect(removed).toBe(added);
+	});
+
+	it('should keep useI18nTranslation and useI18nLocale consistent when locale changes inside startTransition', async () => {
+		const store = createTestStore();
+
+		// Preload both locales so every render has data for its locale.
+		await act(async () => {
+			await store.translations.common.load('en');
+			await store.translations.common.load('ru');
+		});
+
+		const observed: Array<{ locale: string; greeting: string | undefined }> = [];
+
+		const Probe = () => {
+			const { locale } = useI18nLocale();
+			const translations = useI18nTranslation('common');
+			observed.push({ locale: String(locale), greeting: translations?.greeting });
+			return <div data-testid="probe">{`${String(locale)}:${translations?.greeting ?? ''}`}</div>;
+		};
+
+		render(
+			<I18nTypedStoreProvider store={store}>
+				<Probe />
+			</I18nTypedStoreProvider>,
+		);
+
+		expect(screen.getByTestId('probe').textContent).toBe('en:Hello');
+
+		await act(async () => {
+			startTransition(() => {
+				store.changeLocale('ru');
+			});
+		});
+
+		await waitFor(() => {
+			expect(screen.getByTestId('probe').textContent).toBe('ru:Привет');
+		});
+
+		// No torn frame was ever rendered: within a single render the locale from
+		// useI18nLocale and the translation from useI18nTranslation always agree.
+		for (const { locale, greeting } of observed) {
+			expect(greeting).toBe(locale === 'ru' ? 'Привет' : 'Hello');
+		}
 	});
 });

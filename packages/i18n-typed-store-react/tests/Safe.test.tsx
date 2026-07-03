@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
+import { Suspense } from 'react';
 import { Safe } from '../src/index';
 
 describe('Safe', () => {
@@ -85,5 +86,49 @@ describe('Safe', () => {
 		rerender(<Safe>{children}</Safe>);
 
 		expect(children).toHaveBeenCalledTimes(2);
+	});
+
+	it('should re-throw a thrown thenable so Suspense keeps working inside children', async () => {
+		// A thrown Promise is React Suspense signalling, not an error — Safe must
+		// pass it through to the surrounding <Suspense> boundary instead of
+		// swallowing it and rendering the error component.
+		let resolvePromise!: (value: string) => void;
+		const promise = new Promise<string>((resolve) => {
+			resolvePromise = resolve;
+		});
+		let resolved: string | undefined;
+		void promise.then((value) => {
+			resolved = value;
+		});
+
+		const errorHandler = vi.fn();
+
+		const readValue = () => {
+			if (resolved === undefined) {
+				throw promise;
+			}
+			return resolved;
+		};
+
+		render(
+			<Suspense fallback={<div>Suspense fallback</div>}>
+				<Safe errorComponent={<span>error</span>} errorHandler={errorHandler}>
+					{() => readValue()}
+				</Safe>
+			</Suspense>,
+		);
+
+		// The thenable reached the Suspense boundary: the fallback is shown and
+		// neither the error component nor the error handler was involved.
+		expect(screen.getByText('Suspense fallback')).toBeInTheDocument();
+		expect(screen.queryByText('error')).toBeNull();
+		expect(errorHandler).not.toHaveBeenCalled();
+
+		await act(async () => {
+			resolvePromise('Ready');
+			await promise;
+		});
+
+		expect(screen.getByText('Ready')).toBeInTheDocument();
 	});
 });

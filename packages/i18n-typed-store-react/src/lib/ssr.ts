@@ -1,4 +1,4 @@
-import { TranslationStore } from 'i18n-typed-store';
+import { findBestLocaleMatch, TranslationStore } from 'i18n-typed-store';
 
 /**
  * Request context interface for locale detection in SSR environments.
@@ -60,24 +60,29 @@ function parseAcceptLanguage(acceptLanguage: string | undefined, availableLocale
 	const languages = acceptLanguage
 		.split(',')
 		.map((lang) => {
-			const [locale, q = '1'] = lang.trim().split(';');
-			const quality = q.includes('q=') ? parseFloat(q.split('q=')[1]) : 1;
-			return { locale: locale.toLowerCase(), quality };
+			const [locale, q] = lang.trim().split(';');
+			// Malformed q= values (e.g. "q=abc") must not poison the sort with
+			// NaN — fall back to the spec default of 1.
+			let quality = 1;
+			if (q && q.includes('q=')) {
+				const parsedQuality = parseFloat(q.split('q=')[1]);
+				if (!Number.isNaN(parsedQuality)) {
+					quality = parsedQuality;
+				}
+			}
+			return { locale: locale.trim(), quality };
 		})
+		// q=0 explicitly means "not acceptable" (RFC 9110); empty tags are noise.
+		.filter(({ locale, quality }) => locale !== '' && quality > 0)
 		.sort((a, b) => b.quality - a.quality);
 
-	// Try to find exact match first
+	// Match each requested language in preference order using BCP 47 subtag
+	// matching. The previous prefix comparison produced false positives —
+	// e.g. requested 'fr' matched an available 'fris' locale via startsWith.
 	for (const { locale } of languages) {
-		const exactMatch = availableLocales.find((l) => l.toLowerCase() === locale);
-		if (exactMatch) {
-			return exactMatch;
-		}
-
-		// Try to find language match (e.g., 'en' matches 'en-US')
-		const languageCode = locale.split('-')[0];
-		const languageMatch = availableLocales.find((l) => l.toLowerCase().startsWith(languageCode));
-		if (languageMatch) {
-			return languageMatch;
+		const match = findBestLocaleMatch(locale, availableLocales as string[]);
+		if (match) {
+			return match;
 		}
 	}
 
@@ -146,19 +151,26 @@ export function getLocaleFromRequest<L extends Record<string, string>>(
 		parseAcceptLanguage: shouldParseAcceptLanguage = true,
 	} = options;
 
-	// 1. Check query parameter
+	// 1. Check query parameter. BCP 47 matching (instead of a strict includes)
+	// lets '?locale=ru-RU' resolve to an available 'ru' locale.
 	if (queryParamName && context.query?.[queryParamName]) {
 		const queryLocale = Array.isArray(context.query[queryParamName]) ? context.query[queryParamName][0] : context.query[queryParamName];
-		if (typeof queryLocale === 'string' && availableLocales.includes(queryLocale)) {
-			return queryLocale as keyof L;
+		if (typeof queryLocale === 'string' && queryLocale) {
+			const matchedLocale = findBestLocaleMatch(queryLocale, availableLocales as string[]);
+			if (matchedLocale) {
+				return matchedLocale as keyof L;
+			}
 		}
 	}
 
-	// 2. Check cookie
+	// 2. Check cookie (BCP 47 matching, same as the query parameter).
 	if (cookieName && context.cookies?.[cookieName]) {
 		const cookieLocale = context.cookies[cookieName];
-		if (typeof cookieLocale === 'string' && availableLocales.includes(cookieLocale)) {
-			return cookieLocale as keyof L;
+		if (typeof cookieLocale === 'string' && cookieLocale) {
+			const matchedLocale = findBestLocaleMatch(cookieLocale, availableLocales as string[]);
+			if (matchedLocale) {
+				return matchedLocale as keyof L;
+			}
 		}
 	}
 
@@ -197,15 +209,25 @@ export function getLocaleFromRequest<L extends Record<string, string>>(
  * @param store - Translation store instance
  * @param locale - Locale to initialize with
  *
+ * @remarks
+ * **Concurrency warning (SSR):** the store is mutable, shared state. `changeLocale`
+ * writes `store.currentLocale` and `load()` writes the per-locale translation cache
+ * on the *same* object. A Node server handles many requests against one module
+ * instance and interleaves them at every `await`, so a single module-level store
+ * shared across requests will leak one user's locale and loaded translations into
+ * another user's response. Create a **fresh store per request** (call
+ * `storeFactory.type<...>()` inside the request handler and pass it down via the
+ * Provider / props) — do not reuse one module-scoped store across concurrent requests.
+ *
  * @example
  * ```ts
- * // In SSR handler
+ * // In SSR handler — create a per-request store, then initialize it.
  * const locale = getLocaleFromRequest(context, {
  *   defaultLocale: 'en',
  *   availableLocales: ['en', 'ru'],
  * });
  *
- * const store = storeFactory.type<MyTranslations>();
+ * const store = storeFactory.type<MyTranslations>(); // fresh per request
  * initializeStore(store, locale);
  *
  * // Preload translations if needed

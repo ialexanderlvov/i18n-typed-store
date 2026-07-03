@@ -1,4 +1,4 @@
-import { createContext, type ReactNode } from 'react';
+import { createContext, useMemo, type ReactNode } from 'react';
 import { II18nTypedStoreContext } from '../types/context';
 import { TranslationStore } from 'i18n-typed-store';
 
@@ -48,16 +48,10 @@ export const I18nTypedStoreProvider = <
 	children: ReactNode;
 	suspenseMode?: II18nTypedStoreContext<N, L, M>['suspenseMode'];
 }) => {
-	return (
-		<I18nTypedStoreContext.Provider
-			value={
-				{
-					store,
-					suspenseMode,
-				} as II18nTypedStoreContext<N, L, M>
-			}
-		>
-			{children}
-		</I18nTypedStoreContext.Provider>
-	);
+	// Memoise the context value so it keeps a stable identity across renders.
+	// A fresh `{ store, suspenseMode }` object on every render would otherwise
+	// re-trigger every context consumer in the tree on each parent re-render.
+	const value = useMemo(() => ({ store, suspenseMode }) as II18nTypedStoreContext<N, L, M>, [store, suspenseMode]);
+
+	return <I18nTypedStoreContext.Provider value={value}>{children}</I18nTypedStoreContext.Provider>;
 };

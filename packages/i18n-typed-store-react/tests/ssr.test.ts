@@ -401,6 +401,112 @@ describe('getLocaleFromRequest', () => {
 
 			expect(locale).toBe('de');
 		});
+
+		it('should not match a language onto an unrelated locale sharing its prefix (fr vs fris)', () => {
+			// The old startsWith matching resolved 'fr' to a 'fris' locale.
+			// BCP 47 subtag matching must not: 'fr' and 'fris' are different languages.
+			const context: RequestContext = {
+				headers: { 'accept-language': 'fr' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				defaultLocale: 'en',
+				availableLocales: ['fris', 'en'],
+				headerName: 'accept-language',
+				parseAcceptLanguage: true,
+			});
+
+			expect(locale).toBe('en');
+		});
+
+		it('should still match language subtags onto regional locales (en matches en-US)', () => {
+			const context: RequestContext = {
+				headers: { 'accept-language': 'en' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				defaultLocale: 'ru',
+				availableLocales: ['ru', 'en-US'],
+				headerName: 'accept-language',
+				parseAcceptLanguage: true,
+			});
+
+			expect(locale).toBe('en-US');
+		});
+
+		it('should survive a malformed q= value and treat it as q=1', () => {
+			// parseFloat('garbage') is NaN; NaN used to poison the quality sort.
+			const context: RequestContext = {
+				headers: { 'accept-language': 'ru;q=garbage,en;q=0.5' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				headerName: 'accept-language',
+				parseAcceptLanguage: true,
+			});
+
+			// 'ru' gets the default quality of 1 and wins over en;q=0.5.
+			expect(locale).toBe('ru');
+		});
+
+		it('should ignore languages explicitly rejected with q=0', () => {
+			const context: RequestContext = {
+				headers: { 'accept-language': 'ru;q=0,de;q=0.5' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				headerName: 'accept-language',
+				parseAcceptLanguage: true,
+			});
+
+			expect(locale).toBe('de');
+		});
+	});
+
+	describe('BCP 47 matching for query and cookie values', () => {
+		it('should accept ?locale=ru-RU when only base locales are available', () => {
+			const context: RequestContext = {
+				query: { locale: 'ru-RU' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				defaultLocale: 'en',
+				availableLocales: ['en', 'ru'],
+				queryParamName: 'locale',
+			});
+
+			expect(locale).toBe('ru');
+		});
+
+		it('should accept a BCP 47 cookie value when only base locales are available', () => {
+			const context: RequestContext = {
+				cookies: { locale: 'de-AT' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				cookieName: 'locale',
+			});
+
+			expect(locale).toBe('de');
+		});
+
+		it('should fall through to the next source when the query value has no BCP 47 match', () => {
+			const context: RequestContext = {
+				query: { locale: 'ja-JP' },
+				cookies: { locale: 'ru' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				queryParamName: 'locale',
+				cookieName: 'locale',
+			});
+
+			expect(locale).toBe('ru');
+		});
 	});
 
 	describe('priority order', () => {
@@ -534,7 +640,11 @@ describe('getLocaleFromRequest', () => {
 			expect(locale).toBe('en');
 		});
 
-		it('should handle case sensitivity in available locales', () => {
+		it('should match query locale case-insensitively (BCP 47 matching)', () => {
+			// Rewritten: query/cookie values now go through BCP 47 matching
+			// (findBestLocaleMatch), which is case-insensitive per the spec —
+			// 'RU' resolves to the available 'ru' locale instead of falling back
+			// to the default.
 			const context: RequestContext = {
 				query: { locale: 'RU' },
 			};
@@ -544,7 +654,7 @@ describe('getLocaleFromRequest', () => {
 				queryParamName: 'locale',
 			});
 
-			expect(locale).toBe('en'); // 'RU' !== 'ru', so should return default
+			expect(locale).toBe('ru');
 		});
 	});
 });
