@@ -324,6 +324,29 @@ const greetingRu = getTranslation(store, 'common.greeting', 'ru');
 const greetingUs = getTranslation(store, 'common.greeting', 'en-US'); // uses 'en'
 ```
 
+### `getTranslationOrThrow`
+
+Strict variant of `getTranslation`: returns the value with a **clean type** (no `| Key` union) and throws `TranslationMissingError` when the key cannot be resolved. Use it when the translation is expected to be loaded — object values can be used directly without `typeof` narrowing:
+
+```typescript
+import { getTranslationOrThrow, TranslationMissingError } from 'i18n-typed-store';
+
+await store.translations.common.load('en');
+
+const message = getTranslationOrThrow(store, 'common.message');
+message.title; // ✅ object access without narrowing
+
+try {
+	getTranslationOrThrow(store, 'common.missing' as never);
+} catch (error) {
+	if (error instanceof TranslationMissingError) {
+		console.error(`Missing: ${error.key} (${error.locale})`);
+	}
+}
+```
+
+The `onMissingKey` handler (if configured) fires before the throw, so monitoring stays consistent with `getTranslation`.
+
 ### `interpolate`
 
 Type-safe `{{placeholder}}` substitution. For literal templates, the required parameters are derived from the template string type — a missing or misspelled parameter is a **compile-time error**.
@@ -971,6 +994,7 @@ type IntlFormatters = {
 - `createTranslationModuleMap<N, L, Module>(namespaces, locales, loadModule): Record<keyof N, Record<keyof L, () => Promise<Module>>>`
 - `createPluralSelector(locale: string, options?: { strict?: boolean; intlOptions?: Intl.PluralRulesOptions }): (count: number, variants: PluralVariants) => string`
 - `getTranslation<N, L, M, Key>(store: TranslationStore<N, L, M>, key: Key, locale?: string | keyof L): GetTranslationValue<M, Key> | Key`
+- `getTranslationOrThrow<N, L, M, Key>(store: TranslationStore<N, L, M>, key: Key, locale?: string | keyof L): GetTranslationValue<M, Key>` — throws `TranslationMissingError` on a miss instead of returning the key
 - `interpolate<S extends string>(template: S, params?: InterpolationParams<S>): string`
 - `createIntlFormatters(locale: string): IntlFormatters`
 - `parseLocale(locale: string): ParsedLocale`

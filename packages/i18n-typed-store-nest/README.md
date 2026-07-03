@@ -347,9 +347,9 @@ const translation = this.i18nService.getCurrentTranslation('common');
 // Returns undefined if translation is not loaded for the current locale
 ```
 
-#### `getTranslationByKey(key: Key, locale?: keyof L): GetTranslationValue<M, Key>`
+#### `getTranslationByKey(key: Key, locale?: keyof L): GetTranslationValue<M, Key> | Key`
 
-Gets translation value by key. Supports string keys in the format `"namespace"`, `"namespace.key"` or `"namespace.nested.key"`.
+Gets translation value by key. Supports string keys in the format `"namespace"`, `"namespace.key"` or `"namespace.nested.key"`. On a miss (namespace not loaded, unknown path) it returns the **key string** — hence the `| Key` in the return type; narrow with `typeof` before using object values.
 
 ```typescript
 // Get entire namespace
@@ -363,6 +363,17 @@ const saveButton = this.i18nService.getTranslationByKey('common.buttons.save');
 
 // With locale specified
 const greetingRu = this.i18nService.getTranslationByKey('common.greeting', 'ru');
+```
+
+#### `getTranslationByKeyOrThrow(key: Key, locale?: keyof L): GetTranslationValue<M, Key>`
+
+Strict variant of `getTranslationByKey`: returns the value with a **clean type** (no `| Key` union) and throws `TranslationMissingError` (from `i18n-typed-store`) when the key cannot be resolved. Use it when translations are known to be loaded (e.g. with module `preload`), so object values can be used directly:
+
+```typescript
+const message = this.i18nService.getTranslationByKeyOrThrow('common.message');
+message.title; // ✅ object access without narrowing
+
+// Requires i18n-typed-store >= 0.5.1
 ```
 
 #### `getStore(): TranslationStore<N, L, M>`

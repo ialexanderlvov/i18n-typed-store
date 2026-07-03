@@ -376,7 +376,16 @@ import { getLocaleFromRequest, initializeStore } from 'i18n-typed-store-react/se
 // import { getLocaleFromRequest } from 'i18n-typed-store-react';
 ```
 
-`i18n-typed-store-react/server` also re-exports the whole `i18n-typed-store` core (`createTranslationStore`, `getTranslation`, `findBestLocaleMatch`, ...), so server code can create and preload stores from a single import. The root entry still re-exports the SSR utilities for backwards compatibility, but only client modules can import it.
+`i18n-typed-store-react/server` also re-exports the whole `i18n-typed-store` core (`createTranslationStore`, `getTranslation`, `getTranslationOrThrow`, `findBestLocaleMatch`, ...), so server code can create and preload stores from a single import. The root entry still re-exports the SSR utilities for backwards compatibility, but only client modules can import it.
+
+> **Tip:** the core helpers are re-exported from BOTH entries, including `getTranslationOrThrow` — the strict variant of `getTranslation` that returns a clean type (no `| Key` union) and throws `TranslationMissingError` on a miss. Handy in event handlers and server code where translations are known to be preloaded:
+>
+> ```ts
+> import { getTranslationOrThrow } from 'i18n-typed-store-react'; // or .../server
+>
+> const message = getTranslationOrThrow(store, 'common.message');
+> message.title; // ✅ object access without narrowing
+> ```
 
 ### Server rendering requires preloading
 

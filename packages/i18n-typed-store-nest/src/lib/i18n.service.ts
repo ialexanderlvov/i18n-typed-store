@@ -3,6 +3,7 @@ import { I18nModuleOptions } from '../types/types';
 import {
 	findBestLocaleMatch,
 	getTranslation,
+	getTranslationOrThrow,
 	type GetTranslationValue,
 	type TranslationKeys,
 	type TranslationStore,
@@ -247,5 +248,32 @@ export class I18nService<
 	 */
 	getTranslationByKey<Key extends TranslationKeys<M>>(key: Key, locale?: keyof L): GetTranslationValue<M, Key> | Key {
 		return getTranslation(this.store, key, this.resolveLocale(locale));
+	}
+
+	/**
+	 * Strict variant of `getTranslationByKey`: returns the translation value
+	 * with a clean type (no `| Key` union) and THROWS `TranslationMissingError`
+	 * from `i18n-typed-store` when the key cannot be resolved, instead of
+	 * returning the key string.
+	 *
+	 * Use it when the translation is expected to be loaded (e.g. after module
+	 * `preload` or an awaited `loadTranslation`), so object values can be used
+	 * directly without `typeof` narrowing.
+	 *
+	 * @template Key - Translation key type (inferred from key parameter)
+	 *
+	 * @param key - Translation key: "namespace", "namespace.key" or "namespace.nested.key" (fully typed)
+	 * @param locale - Optional locale to use. If not provided, uses the per-request locale (or store default outside a request).
+	 * @returns Translation value with the exact inferred type
+	 * @throws {TranslationMissingError} If the key cannot be resolved
+	 *
+	 * @example
+	 * ```ts
+	 * const message = this.i18nService.getTranslationByKeyOrThrow('common.message');
+	 * message.title; // object access without narrowing
+	 * ```
+	 */
+	getTranslationByKeyOrThrow<Key extends TranslationKeys<M>>(key: Key, locale?: keyof L): GetTranslationValue<M, Key> {
+		return getTranslationOrThrow(this.store, key, this.resolveLocale(locale));
 	}
 }

@@ -202,4 +202,42 @@ describe('I18nService', () => {
 			expect(translation).toBeUndefined();
 		});
 	});
+
+	describe('getTranslationByKeyOrThrow', () => {
+		it('returns objects with a clean type — no narrowing needed', async () => {
+			const service = createTestService();
+			await service.loadTranslation('common', 'en');
+
+			// The strict variant has no `| Key` union: direct property access
+			const buttons = service.getTranslationByKeyOrThrow('common.buttons');
+			expect(buttons.save).toBe('Save');
+
+			expect(service.getTranslationByKeyOrThrow('common.greeting')).toBe('Hello');
+		});
+
+		it('throws TranslationMissingError when the translation is not loaded', async () => {
+			const service = createTestService();
+
+			let caught: unknown;
+			try {
+				service.getTranslationByKeyOrThrow('common.greeting');
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(caught).toBeInstanceOf(Error);
+			expect((caught as Error).name).toBe('TranslationMissingError');
+			expect((caught as Error & { key: string; locale: string }).key).toBe('common.greeting');
+			expect((caught as Error & { key: string; locale: string }).locale).toBe('en');
+		});
+
+		it('resolves through the per-request locale like getTranslationByKey', async () => {
+			const service = createTestService();
+			await service.loadTranslation('common', 'en');
+			await service.loadTranslation('common', 'ru');
+
+			expect(service.getTranslationByKeyOrThrow('common.greeting', 'ru')).toBe('Привет');
+			expect(service.getTranslationByKeyOrThrow('common.buttons', 'ru').save).toBe('Сохранить');
+		});
+	});
 });

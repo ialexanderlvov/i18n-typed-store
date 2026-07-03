@@ -4,6 +4,8 @@
 
 ### Patch Changes
 
+- Added `getTranslationOrThrow(store, key, locale?)` and `TranslationMissingError`: a strict variant of `getTranslation` that returns the value with a clean type (no `| Key` union) and throws on a miss instead of returning the key string. The `onMissingKey` handler still fires before the throw. Use it where translations are known to be loaded, so object values can be used directly without `typeof` narrowing.
+
 - fd828cc: Fix a 0.5.0 type regression that broke class- and interface-typed translations.
 
     The traversability guard introduced with the array/function key exclusion used `T extends Record<string, unknown>`, which rejects class instances and interfaces (they have no implicit index signature). `TranslationKeys<M>` collapsed to top-level namespace keys only, so calls like `getTranslationByKey('common.greeting')` stopped compiling whenever the namespace was typed by a translation class — the library's primary documented pattern. The guard now tests `T extends object` (arrays and functions are still excluded), restoring nested dot-path keys for classes and interfaces.
