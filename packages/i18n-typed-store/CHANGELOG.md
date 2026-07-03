@@ -9,7 +9,7 @@
     **Core (`i18n-typed-store`)**
 
     - `getTranslation` return type is now `GetTranslationValue<M, Key> | Key`, reflecting that the key string is returned on a miss (previously an unsound type that could hand a string to callers expecting a number/object/function).
-    - `TranslationKeys` / `GetTranslationValue` no longer treat arrays and functions as traversable objects, so array/function members (`items.length`, `items.map`, `items.0`, …) are no longer offered as valid keys. Class- and interface-typed translations keep producing nested dot-path keys (`common.greeting`), and methods declared on a translation class prototype resolve at runtime (prototype machinery and `Object.prototype` builtins still never resolve).
+    - `TranslationKeys` / `GetTranslationValue` no longer treat arrays and functions as traversable objects, so array/function members (`items.length`, `items.map`, `items.0`, …) are no longer offered as valid keys.
     - `smartDeepMerge`: fallback keys named like `Object.prototype` members (`toString`, `valueOf`, …) are now copied (`hasOwnProperty` instead of the prototype-walking `in`); an own `__proto__` on the _current_ object can no longer survive into the merged result.
     - `createPluralSelector` strict mode now accepts an empty-string `other` variant (presence check instead of truthiness).
     - `deleteOtherLocalesAfterLoad` no longer wipes the freshly-loaded fallback locale (which caused reload churn / potential data loss).
