@@ -49,4 +49,15 @@ export interface CreateTranslationStoreOptions<N extends Record<string, string>,
 	 * @default 'change-locale'
 	 */
 	changeLocaleEventName?: string;
+	/**
+	 * Called by `getTranslation` when a key cannot be resolved (namespace not
+	 * loaded, missing path, etc.) right before the key string is returned.
+	 * Use it to report missing translations to logging/monitoring.
+	 *
+	 * @example
+	 * ```ts
+	 * onMissingKey: (key, locale) => console.warn(`[i18n] missing ${locale}:${key}`),
+	 * ```
+	 */
+	onMissingKey?: (key: string, locale: string) => void;
 }

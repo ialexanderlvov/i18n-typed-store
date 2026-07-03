@@ -33,6 +33,12 @@ export type TranslationStore<N extends Record<string, string>, L extends Record<
 	 * @param locale - New locale key or BCP 47 locale string (e.g., 'ru-RU', 'en-US')
 	 */
 	changeLocale: (locale: string | keyof L) => void;
+	/**
+	 * Optional handler invoked by `getTranslation` when a key resolves to
+	 * nothing and the key string is about to be returned instead.
+	 * Configured via `CreateTranslationStoreOptions.onMissingKey`.
+	 */
+	onMissingKey?: (key: string, locale: string) => void;
 	/** Translations organized by namespace key */
 	translations: {
 		[K in keyof N]: {

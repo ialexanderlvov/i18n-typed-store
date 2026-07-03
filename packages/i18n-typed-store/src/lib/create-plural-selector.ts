@@ -35,11 +35,11 @@ export const createPluralSelector = (
 		throw new TypeError(`Invalid locale: expected non-empty string, got ${typeof locale}`);
 	}
 
-	const { strict = false } = options;
+	const { strict = false, intlOptions } = options;
 
 	let pluralRules: Intl.PluralRules;
 	try {
-		pluralRules = new Intl.PluralRules(locale);
+		pluralRules = new Intl.PluralRules(locale, intlOptions);
 	} catch (error) {
 		throw new TypeError(`Invalid locale format: ${locale}. ${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -58,7 +58,10 @@ export const createPluralSelector = (
 			throw new TypeError(`Invalid count: expected finite number, got ${count}`);
 		}
 
-		if (strict && !variants.other) {
+		// Check for presence, not truthiness: an empty-string `other` ('') is a
+		// legitimate variant (e.g. a language that renders nothing for the
+		// generic case) and must not trip strict mode.
+		if (strict && variants.other === undefined) {
 			throw new Error("Plural variants must include 'other' variant when strict mode is enabled");
 		}
 
