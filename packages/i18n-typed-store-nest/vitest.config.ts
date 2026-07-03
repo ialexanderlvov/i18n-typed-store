@@ -1,6 +1,16 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+	// The integration tests declare real Nest controllers/modules with
+	// decorators; esbuild only honors `experimentalDecorators` when it is set
+	// explicitly (the package tsconfig excludes the tests directory).
+	esbuild: {
+		tsconfigRaw: {
+			compilerOptions: {
+				experimentalDecorators: true,
+			},
+		},
+	},
 	test: {
 		globals: true,
 		environment: 'jsdom',

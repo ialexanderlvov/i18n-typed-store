@@ -1,8 +1,9 @@
 import { Injectable, NestMiddleware, Inject } from '@nestjs/common';
+import { findBestLocaleMatch } from 'i18n-typed-store';
 import { I18nService } from './i18n.service';
-import { extractLocaleFromContext } from './utils';
+import { extractLocaleFromContext, attachI18nServiceToRequest, buildRequestContext } from './utils';
 import { I18N_SERVICE, I18N_OPTIONS } from './tokens';
-import { I18nModuleOptions, I18nRequestContext } from '../types/types';
+import { I18nModuleOptions } from '../types/types';
 import { i18nRequestStorage } from './request-context';
 
 // Types for Express (if installed)
@@ -41,31 +42,25 @@ export class I18nMiddleware implements NestMiddleware {
 	use(req: ExpressRequest, _: ExpressResponse, next: ExpressNextFunction) {
 		// Attach service to request for parameter decorators that prefer
 		// reading from `req.i18nService` over injecting the service directly.
-		Object.defineProperty(req, 'i18nService', {
-			value: this.i18nService,
-			writable: false,
-			enumerable: false,
-			configurable: false,
-		});
+		// Tolerates repeated attachment (e.g. the interceptor also runs).
+		attachI18nServiceToRequest(req, this.i18nService);
 
-		const requestContext: I18nRequestContext = {
-			headers: req.headers,
-			cookies: req.cookies,
-			query: req.query,
-			params: req.params,
-		};
-
-		const detectedLocale = extractLocaleFromContext(requestContext, {
+		const detectedLocale = extractLocaleFromContext(buildRequestContext(req), {
 			headerName: this.options.headerName,
 			queryParamName: this.options.queryParamName,
 			cookieName: this.options.cookieName,
 			parseAcceptLanguage: this.options.parseAcceptLanguage,
 			availableLocales: this.options.availableLocales as readonly string[] | undefined,
 			defaultLocale: this.options.defaultLocale as string | undefined,
+			resolvers: this.options.resolvers,
+			request: req,
 		});
 
+		// Detection returns entries from `availableLocales`, which may be BCP 47
+		// tags rather than literal store keys — map to a real store key here.
 		const locales = this.i18nService.getLocales();
-		const resolvedLocale = detectedLocale && Object.prototype.hasOwnProperty.call(locales, detectedLocale) ? detectedLocale : undefined;
+		const resolvedLocale =
+			detectedLocale === undefined ? undefined : ((findBestLocaleMatch(detectedLocale, locales) as string | null) ?? undefined);
 
 		// Run downstream handlers inside the per-request scope so that any
 		// async work they trigger sees the same locale.

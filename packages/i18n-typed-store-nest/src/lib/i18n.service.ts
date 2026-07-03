@@ -1,8 +1,14 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { I18nModuleOptions } from '../types/types';
-import { getTranslation, type GetTranslationValue, type TranslationKeys, type TranslationStore } from 'i18n-typed-store';
+import {
+	findBestLocaleMatch,
+	getTranslation,
+	type GetTranslationValue,
+	type TranslationKeys,
+	type TranslationStore,
+} from 'i18n-typed-store';
 import { I18N_OPTIONS, I18N_STORE } from './tokens';
-import { getRequestLocale, setRequestLocale } from './request-context';
+import { getRequestLocale, i18nRequestStorage, setRequestLocale } from './request-context';
 
 /**
  * Service for working with internationalization in NestJS
@@ -13,9 +19,12 @@ import { getRequestLocale, setRequestLocale } from './request-context';
  *     (set by `I18nMiddleware` / `I18nInterceptor`).
  *  3. The default locale on the underlying store.
  *
- * The per-request locale is the safe path under concurrent traffic. Setting
- * the locale via `setLocale()` mutates the global default and should only be
- * used at boot or in single-request CLI/worker scenarios.
+ * Concurrency note: the underlying store keeps ONE shared
+ * `currentTranslation` slot per namespace, overwritten by every `load()` from
+ * any request. This service therefore NEVER reads shared slots when serving a
+ * request — every read goes through the per-request locale straight into the
+ * per-locale cache (`translations[namespace].translations[locale]`), which is
+ * append-only and safe under concurrent traffic.
  *
  * @template N - Type of namespaces object
  * @template L - Type of locales object
@@ -40,30 +49,69 @@ export class I18nService<
 	 */
 	private resolveLocale(explicit?: keyof L | string): keyof L {
 		if (explicit !== undefined && explicit !== null) {
-			return explicit as keyof L;
+			return this.toStoreKey(explicit);
 		}
 		const requestLocale = getRequestLocale();
-		if (requestLocale && Object.prototype.hasOwnProperty.call(this.store.locales, requestLocale)) {
-			return requestLocale as keyof L;
+		if (requestLocale !== undefined) {
+			return this.toStoreKey(requestLocale);
 		}
 		return this.store.currentLocale;
 	}
 
 	/**
-	 * Sets the global default locale on the underlying store.
-	 *
-	 * **Warning:** this mutates shared state. In an HTTP server, prefer
-	 * `setRequestLocale()` (or let the middleware/interceptor set it from the
-	 * incoming request). Using `setLocale()` per request causes a race
-	 * condition where parallel requests overwrite each other's locale.
-	 *
-	 * @param locale - Locale to set
+	 * Maps any locale value — an exact store key or a BCP 47 tag like `'en-US'` —
+	 * to a real key of `store.locales`. The underlying store's `load()` performs
+	 * the same BCP 47 resolution internally and caches under the *resolved* key,
+	 * so callers MUST resolve here too; otherwise reading
+	 * `translations[explicitTag]` lands on a non-existent key and throws.
+	 * Falls back to the store's current locale when nothing matches.
 	 */
-	setLocale(locale: keyof L): void {
-		if (!Object.prototype.hasOwnProperty.call(this.store.locales, locale as PropertyKey)) {
-			throw new Error(`Invalid locale: '${String(locale)}' is not a valid locale key`);
+	private toStoreKey(value: keyof L | string): keyof L {
+		if (Object.prototype.hasOwnProperty.call(this.store.locales, value as PropertyKey)) {
+			return value as keyof L;
 		}
-		this.store.changeLocale(locale);
+		const matched = findBestLocaleMatch(String(value), this.store.locales);
+		return (matched ?? this.store.currentLocale) as keyof L;
+	}
+
+	/**
+	 * Sets the active locale, scoped to where the call happens:
+	 *
+	 * - **Inside a request context** (middleware/interceptor bound
+	 *   AsyncLocalStorage): changes ONLY this request's locale — identical to
+	 *   `setRequestLocale()`. Parallel requests are unaffected, so this is safe
+	 *   to call from controllers/services during a request.
+	 * - **Outside a request context** (bootstrap, CLI, workers, cron): changes
+	 *   the store-wide default locale via `store.changeLocale()`. This mutates
+	 *   shared state and should only happen at boot or in single-request
+	 *   scenarios.
+	 *
+	 * Accepts an exact store key or a BCP 47 tag that resolves to one
+	 * (`'ru-RU'` → `'ru'`).
+	 *
+	 * @param locale - Locale key or BCP 47 tag to set
+	 * @throws Error when the locale cannot be resolved to any store locale
+	 */
+	setLocale(locale: keyof L | string): void {
+		let resolved: keyof L;
+		if (Object.prototype.hasOwnProperty.call(this.store.locales, locale as PropertyKey)) {
+			resolved = locale as keyof L;
+		} else {
+			const matched = findBestLocaleMatch(String(locale), this.store.locales);
+			if (matched === null) {
+				throw new Error(`Invalid locale: '${String(locale)}' is not a valid locale key`);
+			}
+			resolved = matched as keyof L;
+		}
+
+		// Request scope active → per-request change only (race-free).
+		if (i18nRequestStorage.getStore()) {
+			setRequestLocale(String(resolved));
+			return;
+		}
+
+		// No request scope → global default (boot / CLI / worker semantics).
+		this.store.changeLocale(resolved);
 	}
 
 	/**
@@ -96,12 +144,15 @@ export class I18nService<
 	}
 
 	/**
-	 * Loads translation for the specified namespace
+	 * Loads translation for the specified namespace.
+	 * Without an explicit `locale`, loads for the per-request locale
+	 * (AsyncLocalStorage) or, outside a request, the store default.
 	 *
 	 * @param namespace - Namespace key
-	 * @param locale - Locale (optional, uses current locale)
+	 * @param locale - Locale (optional, uses the resolved current locale)
 	 * @param fromCache - Whether to use cache (default: true)
 	 * @returns Promise that resolves after loading
+	 * @throws Error when the underlying module load fails
 	 */
 	async loadTranslation<K extends keyof N>(namespace: K, locale?: keyof L, fromCache?: boolean): Promise<void> {
 		const targetLocale = this.resolveLocale(locale);
@@ -109,26 +160,48 @@ export class I18nService<
 	}
 
 	/**
-	 * Gets translation for the specified namespace
+	 * Gets translation for the specified namespace, loading it when needed.
+	 *
+	 * Reads the per-locale cache slot directly (NOT the store's shared
+	 * `currentTranslation`, which any concurrent request's `load()` may have
+	 * pointed at another locale in the meantime).
 	 *
 	 * @param namespace - Namespace key
-	 * @param locale - Locale (optional, uses current locale)
-	 * @returns Translation object or undefined if not loaded
+	 * @param locale - Locale (optional, uses the resolved current locale)
+	 * @returns Translation object, or undefined if the load failed
 	 */
-	async getTranslation<K extends keyof N>(namespace: K, locale?: keyof L): Promise<M[K]> {
+	async getTranslation<K extends keyof N>(namespace: K, locale?: keyof L): Promise<M[K] | undefined> {
 		const targetLocale = this.resolveLocale(locale);
-		await this.loadTranslation(namespace, targetLocale);
-		return this.store.translations[namespace].translations[targetLocale].namespace!;
+		try {
+			await this.loadTranslation(namespace, targetLocale);
+		} catch {
+			// The documented contract is `undefined` on a failed load — the
+			// error state is still observable on the store
+			// (`translations[namespace].translations[locale].isError`).
+		}
+		// `targetLocale` is a real store key (resolveLocale guarantees it), so
+		// this index is always valid. `namespace` is undefined when the load
+		// failed and nothing was cached before.
+		return this.store.translations[namespace].translations[targetLocale].namespace;
 	}
 
 	/**
-	 * Gets current translation for the specified namespace
+	 * Gets the already-loaded translation for the specified namespace and the
+	 * *current* locale — per-request locale inside a request scope, the store
+	 * default outside of one. Does not trigger loading.
+	 *
+	 * Implementation note: this intentionally does NOT read
+	 * `store.translations[namespace].currentTranslation`. That slot is global
+	 * shared state overwritten by every `load()` of every concurrent request —
+	 * reading it here would return another request's locale under parallel
+	 * traffic. The per-locale cache slot is race-free.
 	 *
 	 * @param namespace - Namespace key
-	 * @returns Translation object or undefined if not loaded
+	 * @returns Translation object or undefined if not loaded for the current locale
 	 */
 	getCurrentTranslation<K extends keyof N>(namespace: K): M[K] | undefined {
-		return this.store.translations[namespace].currentTranslation;
+		const targetLocale = this.resolveLocale();
+		return this.store.translations[namespace].translations[targetLocale]?.namespace;
 	}
 
 	/**
@@ -172,7 +245,7 @@ export class I18nService<
 	 * // Returns: string ("Привет")
 	 * ```
 	 */
-	getTranslationByKey<Key extends TranslationKeys<M>>(key: Key, locale?: keyof L): GetTranslationValue<M, Key> {
+	getTranslationByKey<Key extends TranslationKeys<M>>(key: Key, locale?: keyof L): GetTranslationValue<M, Key> | Key {
 		return getTranslation(this.store, key, this.resolveLocale(locale));
 	}
 }

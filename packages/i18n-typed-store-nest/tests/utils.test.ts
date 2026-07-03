@@ -385,7 +385,14 @@ describe('extractLocaleFromContext', () => {
 			expect(result).toBe('en-US');
 		});
 
-		it('should return locale as-is when availableLocales is not specified (exact match path)', () => {
+		// NOTE: the tests below were rewritten for the BCP 47 / case-insensitive
+		// detection fix. The old versions pinned buggy behavior: every header tag
+		// was lowercased before matching (so 'EN-us' could never match an
+		// available 'en-US') and query/cookie/route were compared with a strict
+		// `includes`. Detection now goes through `findBestLocaleMatch`, which is
+		// case-insensitive, resolves BCP 47 tags ('ru-RU' → 'ru'), and returns
+		// the *available* key in its original casing.
+		it('should preserve the original casing of the header tag when availableLocales is not specified', () => {
 			const context: I18nRequestContext = {
 				headers: { 'accept-language': 'en-US,ru;q=0.8' },
 				query: {},
@@ -398,18 +405,12 @@ describe('extractLocaleFromContext', () => {
 				parseAcceptLanguage: true,
 			});
 
-			// When availableLocales is not specified, parseAcceptLanguageHeader returns locale as-is
-			// because the exact match check (!availableLocales || ...) passes in line 126
-			// Locale is lowercased: 'en-US' -> 'en-us'
-			expect(result).toBe('en-us');
+			// Without availableLocales the raw highest-quality tag is returned
+			// unchanged — no lossy lowercasing.
+			expect(result).toBe('en-US');
 		});
 
-		it('should return base locale when availableLocales is not specified (baseLocale path)', () => {
-			// To test baseLocale path (line 132), we need a scenario where exact match check
-			// doesn't return early. But when availableLocales is undefined, exact match always passes.
-			// So we test with a locale that would trigger baseLocale logic if exact match failed
-			// Actually, the baseLocale path is tested when exact match fails but baseLocale check passes
-			// Since we can't easily test that without mocking, we test the behavior as-is
+		it('should return the highest-quality raw tag when availableLocales is not specified', () => {
 			const context: I18nRequestContext = {
 				headers: { 'accept-language': 'fr-FR,en-US;q=0.8' },
 				query: {},
@@ -422,12 +423,10 @@ describe('extractLocaleFromContext', () => {
 				parseAcceptLanguage: true,
 			});
 
-			// When availableLocales is not specified, exact match returns locale as-is (lowercased)
-			expect(result).toBe('fr-fr');
+			expect(result).toBe('fr-FR');
 		});
 
-		it('should return base locale when exact match fails but baseLocale matches (line 132)', () => {
-			// Test the baseLocale path when exact match fails but baseLocale is in availableLocales
+		it('should fall back to the base language when only the base locale is available', () => {
 			const context: I18nRequestContext = {
 				headers: { 'accept-language': 'en-US,ru;q=0.8' },
 				query: {},
@@ -438,15 +437,13 @@ describe('extractLocaleFromContext', () => {
 			const result = extractLocaleFromContext(context, {
 				headerName: 'accept-language',
 				parseAcceptLanguage: true,
-				availableLocales: ['en'], // 'en-US' exact match fails, but 'en' baseLocale matches
+				availableLocales: ['en'], // 'en-US' has no exact match, BCP 47 matching falls back to 'en'
 			});
 
-			// Should return baseLocale 'en' because exact match 'en-us' fails, but baseLocale 'en' matches
 			expect(result).toBe('en');
 		});
 
-		it('should return matched locale from partial match (covers lines 137-143)', () => {
-			// Test partial match path when exact and baseLocale matches fail
+		it('should match a same-language regional variant when no exact/base match exists', () => {
 			const context: I18nRequestContext = {
 				headers: { 'accept-language': 'en-US,ru;q=0.8' },
 				query: {},
@@ -457,70 +454,27 @@ describe('extractLocaleFromContext', () => {
 			const result = extractLocaleFromContext(context, {
 				headerName: 'accept-language',
 				parseAcceptLanguage: true,
-				availableLocales: ['en-GB'], // 'en-US' exact fails, 'en' base fails, but partial match works
+				availableLocales: ['en-GB'], // same language, different region — still the best match
 			});
 
-			// This covers lines 137-143: if (availableLocales) { const matched = availableLocales.find(...) }
-			// Should return 'en-GB' because 'en-US' starts with 'en' which matches 'en-GB' pattern
 			expect(result).toBe('en-GB');
 		});
 
-		it('should return base locale in else branch when availableLocales is empty array (covers line 146)', () => {
-			// Line 146 is in the else branch: else { return baseLocale; }
-			// To reach it, we need availableLocales to be falsy (undefined, null, false, etc.)
-			// AND we must skip the checks at lines 128 and 134
-			//
-			// When availableLocales is undefined:
-			// - Line 128: if (!availableLocales || ...) = if (true || ...) = true, returns at line 129
-			// So we never reach line 146.
-			//
-			// However, if availableLocales is an empty array []:
-			// - Line 128: if (![] || [].includes(locale)) = if (false || false) = false, continue
-			// - Line 134: if (![] || [].includes(baseLocale)) = if (false || false) = false, continue
-			// - Line 139: if ([]) = if (true) - empty array is truthy, so we enter if branch, not else
-			//
-			// So empty array won't work either because [] is truthy.
-			//
-			// Actually, to reach line 146, we need availableLocales to be a falsy value (undefined, null, false, 0, '')
-			// But when it's falsy, line 128 always returns.
-			//
-			// Wait - let me check the code again. Line 146 is in else branch of `if (availableLocales)`.
-			// So availableLocales must be falsy to enter else. But then line 128 `if (!availableLocales || ...)`
-			// will always be true and return.
-			//
-			// This means line 146 is truly unreachable in the current logic.
-			// However, for coverage purposes, let's test with null to see if it behaves differently:
-			const result1 = parseAcceptLanguageHeader('en-US', null as any);
-			// This will return at line 129 because !null = true
-			expect(result1).toBe('en-us');
-
-			// Line 146 is unreachable defensive code. The else branch exists but can never be reached
-			// because the earlier checks always return when availableLocales is falsy.
-			// For 100% coverage, this would require code refactoring.
+		it('should match an Accept-Language tag with arbitrary casing against available keys (EN-us -> en-US)', () => {
+			// Regression: the old implementation lowercased the tag and compared
+			// it strictly, so 'EN-us' never matched an available 'en-US'.
+			const result = parseAcceptLanguageHeader('EN-us,ru;q=0.8', ['en-US', 'ru']);
+			expect(result).toBe('en-US');
 		});
 
-		it('should return base locale when availableLocales is not specified and partial match path (line 144-146)', () => {
-			// Test the else branch in partial match (line 144-146)
-			// This happens when availableLocales is not specified and we're in partial match section
-			// But actually, this path is hard to reach because exact match would have returned earlier
-			// We can test it by ensuring exact match and baseLocale both don't match, but availableLocales is undefined
-			// Actually, when availableLocales is undefined, exact match always passes, so this path is unreachable
-			// But we can test the logic by checking what happens in the else branch
-			const context: I18nRequestContext = {
-				headers: { 'accept-language': 'xyz-ABC,en;q=0.8' },
-				query: {},
-				cookies: {},
-				params: {},
-			};
+		it('should resolve a BCP 47 region tag to the base available locale (ru-RU -> ru)', () => {
+			const result = parseAcceptLanguageHeader('ru-RU,en;q=0.5', ['en', 'ru']);
+			expect(result).toBe('ru');
+		});
 
-			const result = extractLocaleFromContext(context, {
-				headerName: 'accept-language',
-				parseAcceptLanguage: true,
-				// availableLocales not specified - exact match 'xyz-abc' would pass, but let's see
-			});
-
-			// When availableLocales is not specified, exact match returns locale as-is
-			expect(result).toBe('xyz-abc');
+		it('should ignore wildcard entries in Accept-Language', () => {
+			const result = parseAcceptLanguageHeader('*,en;q=0.8', ['en', 'ru']);
+			expect(result).toBe('en');
 		});
 
 		it('should return undefined when no locale matches', () => {

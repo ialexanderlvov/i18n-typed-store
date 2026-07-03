@@ -44,11 +44,13 @@ describe('NestJS Decorators', () => {
 		}
 
 		return {
+			getType: () => 'http',
+			getArgs: () => [request, {}, () => undefined],
 			switchToHttp: () => ({
 				getRequest: () => request,
 				getResponse: () => ({}),
 			}),
-		} as ExecutionContext;
+		} as unknown as ExecutionContext;
 	};
 
 	describe('getI18nService helper function', () => {

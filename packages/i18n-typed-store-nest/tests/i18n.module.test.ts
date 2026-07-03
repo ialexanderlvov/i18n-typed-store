@@ -48,7 +48,7 @@ describe('I18nModule', () => {
 			expect(module.exports).toBeDefined();
 		});
 
-		it('should provide I18N_STORE token', () => {
+		it('should provide I18N_STORE token (derived from resolved options)', () => {
 			const store = createTestStore();
 			const options: I18nModuleOptions = {
 				store,
@@ -56,10 +56,15 @@ describe('I18nModule', () => {
 			};
 
 			const module = I18nModule.forRoot(options);
-			const storeProvider = module.providers?.find((p: any) => p.provide === I18N_STORE);
+			const storeProvider = module.providers?.find((p: any) => p.provide === I18N_STORE) as any;
+			const optionsProvider = module.providers?.find((p: any) => p.provide === I18N_OPTIONS) as any;
 
 			expect(storeProvider).toBeDefined();
-			expect(storeProvider?.useValue).toBe(store);
+			// I18N_STORE is now derived from the resolved I18N_OPTIONS via a factory,
+			// so the same wiring serves both forRoot and forRootAsync.
+			expect(typeof storeProvider.useFactory).toBe('function');
+			expect(storeProvider.inject).toEqual([I18N_OPTIONS]);
+			expect(storeProvider.useFactory(optionsProvider.useValue)).toBe(store);
 		});
 
 		it('should provide I18N_OPTIONS token', () => {

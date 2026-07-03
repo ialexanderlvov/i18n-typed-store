@@ -42,8 +42,10 @@ describe('I18nInterceptor', () => {
 
 	const createExecutionContext = (request: any): ExecutionContext =>
 		({
+			getType: () => 'http',
+			getArgs: () => [request, {}, () => undefined],
 			switchToHttp: () => ({ getRequest: () => request, getResponse: () => ({}) }),
-		}) as ExecutionContext;
+		}) as unknown as ExecutionContext;
 
 	/**
 	 * Returns a CallHandler whose `handle()` lazily reads the locale from the

@@ -1,16 +1,22 @@
 {
 	"name": "i18n-typed-store-nest",
 	"version": "0.4.0",
-	"description": "Type-safe translation store for managing i18n locales with full TypeScript support",
+	"description": "NestJS module for i18n-typed-store — request-scoped type-safe translations with locale detection",
 	"main": "dist/index.js",
 	"module": "dist/index.mjs",
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.mjs",
-			"require": "./dist/index.js"
-		}
+			"import": {
+				"types": "./dist/index.d.mts",
+				"default": "./dist/index.mjs"
+			},
+			"require": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			}
+		},
+		"./package.json": "./package.json"
 	},
 	"files": [
 		"dist"
@@ -25,8 +31,9 @@
 	},
 	"keywords": [
 		"i18n",
-		"react",
-		"i18n-react",
+		"nestjs",
+		"nest",
+		"i18n-nestjs",
 		"internationalization",
 		"localization",
 		"locale",
@@ -40,25 +47,44 @@
 	"author": "Alexander Lvov",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ialexanderlvov/i18n-typed-store.git"
+		"url": "git+https://github.com/ialexanderlvov/i18n-typed-store.git",
+		"directory": "packages/i18n-typed-store-nest"
+	},
+	"homepage": "https://github.com/ialexanderlvov/i18n-typed-store/tree/main/packages/i18n-typed-store-nest#readme",
+	"bugs": {
+		"url": "https://github.com/ialexanderlvov/i18n-typed-store/issues"
 	},
 	"license": "MIT",
 	"type": "commonjs",
-	"dependencies": {
-		"i18n-typed-store": "workspace:*"
+	"sideEffects": false,
+	"engines": {
+		"node": ">=20"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"peerDependencies": {
-		"@nestjs/common": "^10.0.0",
-		"@nestjs/core": "^10.0.0",
-		"rxjs": "^7.0.0",
-		"express": "^5.0.0"
+		"@nestjs/common": "^10.0.0 || ^11.0.0",
+		"@nestjs/core": "^10.0.0 || ^11.0.0",
+		"express": "^4.0.0 || ^5.0.0",
+		"i18n-typed-store": "workspace:^",
+		"rxjs": "^7.0.0"
+	},
+	"peerDependenciesMeta": {
+		"express": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
-		"@nestjs/common": "^11.1.12",
-		"@nestjs/core": "^11.1.12",
+		"@nestjs/common": "^11.1.27",
+		"@nestjs/core": "^11.1.27",
+		"@nestjs/platform-express": "^11.1.27",
+		"@nestjs/testing": "^11.1.27",
 		"@types/express": "^5.0.6",
-		"@vitest/coverage-v8": "4.0.17",
+		"@vitest/coverage-v8": "4.1.9",
 		"express": "^5.2.1",
+		"i18n-typed-store": "workspace:*",
+		"reflect-metadata": "^0.2.2",
 		"rxjs": "^7.8.2"
 	}
 }
