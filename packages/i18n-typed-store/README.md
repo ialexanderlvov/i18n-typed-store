@@ -1,5 +1,9 @@
 # i18n-typed-store
 
+[![npm version](https://img.shields.io/npm/v/i18n-typed-store.svg)](https://www.npmjs.com/package/i18n-typed-store)
+[![CI](https://github.com/ialexanderlvov/i18n-typed-store/actions/workflows/ci.yml/badge.svg)](https://github.com/ialexanderlvov/i18n-typed-store/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/i18n-typed-store.svg)](https://github.com/ialexanderlvov/i18n-typed-store/blob/main/LICENSE)
+
 > ⚠️ **WARNING: The library API is under active development and may change significantly between versions. Use exact versions in package.json and carefully read the changelog when updating.**
 
 Type-safe translation store for managing i18n locales with full TypeScript support. A lightweight, zero-dependency library for handling internationalization with compile-time type safety. Designed to work with TypeScript classes or objects for translations, providing full IDE support (go-to definition, autocomplete).
@@ -11,11 +15,14 @@ Type-safe translation store for managing i18n locales with full TypeScript suppo
 - ✅ **Lazy loading** - Load translations only when needed
 - ✅ **Type-safe API** - Compile-time validation of translation keys and locales
 - ✅ **Translation classes/objects** - Use TypeScript classes or objects for translations
-- ✅ **Pluralization support** - Built-in plural form selector using `Intl.PluralRules`
+- ✅ **Pluralization support** - Built-in plural form selector using `Intl.PluralRules` (cardinal and ordinal)
+- ✅ **Type-safe interpolation** - `{{placeholder}}` substitution with compile-time parameter checking
+- ✅ **Intl formatters** - Locale-aware number/currency/date/relative-time/list formatting helpers
 - ✅ **Flexible module loading** - Support for any module format (ESM, CommonJS, dynamic imports)
 - ✅ **Zero runtime dependencies** - Lightweight and framework-agnostic
 - ✅ **Fallback locales** - Automatic merging with fallback translations
 - ✅ **Caching** - Built-in translation caching for better performance
+- ✅ **Missing key reporting** - `onMissingKey` hook for logging/monitoring
 - ✅ **Event system** - Listen to locale changes
 - ✅ **BCP 47 locale support** - Advanced locale matching and parsing
 
@@ -162,6 +169,7 @@ function createTranslationStore<T, L, Module>(options: {
 - `deleteOtherLocalesAfterLoad` - Whether to delete translations for other locales after loading (default: `false`)
 - `loadFromCache` - Whether to load translations from cache by default (default: `true`)
 - `changeLocaleEventName` - Event name for locale change events (default: `'change-locale'`)
+- `onMissingKey` - Optional handler `(key, locale) => void` called by `getTranslation` when a key cannot be resolved
 
 **Returns:** Object with `type<M>()` method that creates a typed store.
 
@@ -230,8 +238,13 @@ const module = await loader();
 Creates a plural form selector function for a specific locale using `Intl.PluralRules`.
 
 ```typescript
-function createPluralSelector(locale: string, options?: { strict?: boolean }): (count: number, variants: PluralVariants) => string;
+function createPluralSelector(
+	locale: string,
+	options?: { strict?: boolean; intlOptions?: Intl.PluralRulesOptions },
+): (count: number, variants: PluralVariants) => string;
 ```
+
+Pass `intlOptions: { type: 'ordinal' }` for ordinal selection (1st/2nd/3rd), or fraction-digit options for fraction-aware cardinal selection — see [Ordinal plurals](#ordinal-plurals).
 
 **Example:**
 
@@ -275,9 +288,11 @@ Gets a translation value by key from the translation store. The key can be in th
 function getTranslation<N, L, M, Key extends TranslationKeys<M>>(
 	store: TranslationStore<N, L, M>,
 	key: Key,
-	locale?: keyof L,
-): GetTranslationValue<M, Key>;
+	locale?: string | keyof L,
+): GetTranslationValue<M, Key> | Key;
 ```
+
+> **Miss behavior:** if the namespace is not loaded for the target locale or the path does not resolve, `getTranslation` returns the **key string itself** (hence the `| Key` in the return type) and invokes the store's `onMissingKey` handler if one is configured. The `locale` argument accepts BCP 47 tags and resolves them the same way `load`/`changeLocale` do (`'en-US'` → `'en'`); an unmatched tag falls back to `store.currentLocale`.
 
 **Example:**
 
@@ -304,6 +319,86 @@ const saveButton = getTranslation(store, 'common.buttons.save'); // string
 
 // With locale
 const greetingRu = getTranslation(store, 'common.greeting', 'ru');
+
+// With a BCP 47 tag — resolves to the best matching locale
+const greetingUs = getTranslation(store, 'common.greeting', 'en-US'); // uses 'en'
+```
+
+### `interpolate`
+
+Type-safe `{{placeholder}}` substitution. For literal templates, the required parameters are derived from the template string type — a missing or misspelled parameter is a **compile-time error**.
+
+```typescript
+import { interpolate } from 'i18n-typed-store';
+
+interpolate('Hello {{name}}!', { name: 'Alex' });
+// => 'Hello Alex!'
+
+interpolate('{{count}} of {{ total }} done', { count: 3, total: 10 });
+// => '3 of 10 done'
+
+interpolate('No placeholders'); // no params needed
+// => 'No placeholders'
+
+// ❌ TypeScript error: 'name' is required by the template
+// interpolate('Hello {{name}}!', {});
+```
+
+Unknown placeholders are left in the output verbatim (`{{name}}` is easier to spot in the UI than a silently dropped value). Use it inside translation modules for dynamic strings:
+
+```typescript
+// translations/common/en.ts
+import { interpolate } from 'i18n-typed-store';
+
+export default class CommonTranslationsEn {
+	welcome = (name: string) => interpolate('Welcome back, {{name}}!', { name });
+}
+```
+
+### `createIntlFormatters`
+
+Locale-bound, cached formatting helpers built on the standard `Intl` APIs — numbers, currency, percent, dates, times, relative time, and lists:
+
+```typescript
+import { createIntlFormatters } from 'i18n-typed-store';
+
+const fmt = createIntlFormatters('en');
+
+fmt.number(1234.5); // => '1,234.5'
+fmt.currency(9.99, 'USD'); // => '$9.99'
+fmt.percent(0.42); // => '42%'
+fmt.date(new Date('2026-01-15')); // => 'Jan 15, 2026'
+fmt.time(new Date()); // => '2:30 PM'
+fmt.dateTime(new Date()); // => 'Jan 15, 2026, 2:30 PM'
+fmt.relativeTime(-1, 'day'); // => '1 day ago'
+fmt.list(['a', 'b', 'c']); // => 'a, b, and c'
+```
+
+Formatter instances are cached per options object, so calling these in render paths is cheap. The idiomatic pattern is one `createIntlFormatters(locale)` per translation module:
+
+```typescript
+// translations/cart/ru.ts
+import { createIntlFormatters } from 'i18n-typed-store';
+
+const fmt = createIntlFormatters('ru');
+
+export default class CartTranslationsRu {
+	total = (amount: number) => `Итого: ${fmt.currency(amount, 'RUB')}`;
+	updated = (minutesAgo: number) => `Обновлено ${fmt.relativeTime(-minutesAgo, 'minute')}`;
+}
+```
+
+### `onMissingKey`
+
+Report missing translations to logging/monitoring. The handler fires whenever `getTranslation` fails to resolve a key and returns the key string instead:
+
+```typescript
+const storeFactory = createTranslationStore({
+	// ...
+	onMissingKey: (key, locale) => {
+		console.warn(`[i18n] missing translation: ${locale}:${key}`);
+	},
+});
 ```
 
 ### Locale Utilities
@@ -383,9 +478,11 @@ The store returned by `createTranslationStore().type<M>()` provides the followin
 
 ### Methods
 
-- `changeLocale(locale: string | keyof L): void` - Changes the current locale. If the locale string doesn't match exactly, it uses BCP 47 locale matching to find the best match. Notifies all listeners.
+- `changeLocale(locale: string | keyof L): void` - Changes the current locale. If the locale string doesn't match exactly, it uses BCP 47 locale matching to find the best match (an unmatched locale falls back to `defaultLocale`). For every namespace whose new locale is **already cached**, `currentTranslation` is updated synchronously; namespaces without a cached translation keep the previous one (no flash of missing keys) until `load()` completes. Notifies all listeners.
 - `addChangeLocaleListener(listener: (locale: keyof L) => void): void` - Adds a listener for locale change events
 - `removeChangeLocaleListener(listener: (locale: keyof L) => void): void` - Removes a locale change listener
+
+> **`changeLocale` + `load`:** changing the locale does **not** trigger network loading by itself. The typical flow is `store.changeLocale('ru')` followed by `await store.translations.<ns>.load('ru')` for each namespace in use (framework bindings do this for you).
 
 ### Namespace API
 
@@ -394,7 +491,7 @@ Each namespace in `store.translations` provides:
 - `currentTranslation?: M[K]` - Currently active translation for this namespace
 - `currentLocale?: keyof L` - Locale of the current translation
 - `translations: Record<keyof L, {...}>` - Translations for all locales
-- `load(locale?: string | keyof L, fromCache?: boolean): Promise<void>` - Loads translation for a specific locale. If locale is not provided, uses `currentLocale` or `defaultLocale`. Uses BCP 47 locale matching if the locale string doesn't match exactly.
+- `load(locale?: string | keyof L, fromCache?: boolean): Promise<void>` - Loads translation for a specific locale. If locale is not provided, uses `currentLocale` or `defaultLocale`. Uses BCP 47 locale matching if the locale string doesn't match exactly. **Rejects** if loading fails (and sets `isError` on the locale state) — including when the call deduplicates onto an already-in-flight load that fails. Concurrent `load()` calls for the same locale share a single fetch. A failed fallback load never fails the main locale's load — the fallback merge is simply skipped.
 
 Each locale in `translations` provides:
 
@@ -600,6 +697,8 @@ await store.translations.common.load('ru');
 // Result: merged translation with 'en' as fallback
 ```
 
+> **Treat translations as read-only.** The merge is shallow-copying: nested objects of the merged result are shared by reference with the cached fallback translation (translations may contain functions and class instances, which cannot be safely deep-cloned). Mutating a merged translation would also mutate the fallback shared with other locales.
+
 ### BCP 47 Locale Matching
 
 The library automatically handles BCP 47 locale matching when changing locales or loading translations:
@@ -713,7 +812,6 @@ export default class ProductsTranslationsEn {
 		count +
 		' ' +
 		plur(count, {
-			zero: 'No items',
 			one: 'item',
 			other: 'items',
 		}) +
@@ -726,9 +824,31 @@ const translation = store.translations.products.currentTranslation;
 if (translation) {
 	translation.productCount(1); // => "1 product"
 	translation.productCount(5); // => "5 products"
-	translation.itemsInCart(0); // => "0 No items in cart"
+	translation.itemsInCart(0); // => "0 items in cart" (English selects 'other' for 0)
 	translation.itemsInCart(1); // => "1 item in cart"
 }
+```
+
+> **Note on `zero`:** English (and most languages) never selects the `zero` category — `Intl.PluralRules('en').select(0)` returns `'other'`. The `zero` variant is only used by languages whose CLDR rules define it (e.g., Arabic, Latvian, Welsh). If you want a special "No items" message for `0` in English, branch on the count explicitly:
+>
+> ```typescript
+> itemsInCart = (count: number) => (count === 0 ? 'No items in cart' : `${count} ${plur(count, { one: 'item', other: 'items' })} in cart`);
+> ```
+
+### Ordinal plurals
+
+Pass `Intl.PluralRules` options through to get ordinal (1st/2nd/3rd) selection:
+
+```typescript
+const ordinal = createPluralSelector('en', { intlOptions: { type: 'ordinal' } });
+
+const place = (n: number) => `${n}${ordinal(n, { one: 'st', two: 'nd', few: 'rd', other: 'th' })} place`;
+
+place(1); // => "1st place"
+place(2); // => "2nd place"
+place(3); // => "3rd place"
+place(11); // => "11th place"
+place(21); // => "21st place"
 ```
 
 ## Examples
@@ -828,6 +948,20 @@ type CreateTranslationStoreOptions<N, L, Module> = {
   deleteOtherLocalesAfterLoad?: boolean;
   loadFromCache?: boolean;
   changeLocaleEventName?: string;
+  onMissingKey?: (key: string, locale: string) => void;
+};
+
+type InterpolationParams<S extends string> = /* derived from the template literal type */;
+
+type IntlFormatters = {
+  number: (value: number, options?: Intl.NumberFormatOptions) => string;
+  currency: (value: number, currency: string, options?: Intl.NumberFormatOptions) => string;
+  percent: (value: number, options?: Intl.NumberFormatOptions) => string;
+  date: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
+  time: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
+  dateTime: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
+  relativeTime: (value: number, unit: Intl.RelativeTimeFormatUnit, options?: Intl.RelativeTimeFormatOptions) => string;
+  list: (items: string[], options?: Intl.ListFormatOptions) => string;
 };
 ```
 
@@ -835,12 +969,22 @@ type CreateTranslationStoreOptions<N, L, Module> = {
 
 - `createTranslationStore<N, L, Module>(options: CreateTranslationStoreOptions<N, L, Module>): { type<M>(): TranslationStore<N, L, M> }`
 - `createTranslationModuleMap<N, L, Module>(namespaces, locales, loadModule): Record<keyof N, Record<keyof L, () => Promise<Module>>>`
-- `createPluralSelector(locale: string, options?: { strict?: boolean }): (count: number, variants: PluralVariants) => string`
-- `getTranslation<N, L, M, Key>(store: TranslationStore<N, L, M>, key: Key, locale?: keyof L): GetTranslationValue<M, Key>`
+- `createPluralSelector(locale: string, options?: { strict?: boolean; intlOptions?: Intl.PluralRulesOptions }): (count: number, variants: PluralVariants) => string`
+- `getTranslation<N, L, M, Key>(store: TranslationStore<N, L, M>, key: Key, locale?: string | keyof L): GetTranslationValue<M, Key> | Key`
+- `interpolate<S extends string>(template: S, params?: InterpolationParams<S>): string`
+- `createIntlFormatters(locale: string): IntlFormatters`
 - `parseLocale(locale: string): ParsedLocale`
 - `generateLocaleCandidates(locale: string): string[]`
 - `findBestLocaleMatch<T>(requestedLocale: string, availableLocales: T): keyof T | null`
 - `findBestLocaleMatch(requestedLocale: string, availableLocales: string[]): string | null`
+- `smartDeepMerge(current: any, fallback: any): any` — the merge used for fallback locales
+- `EventEmitter` — the typed event emitter used internally by the store
+
+## Limitations
+
+- **No ICU MessageFormat.** Interpolation is `{{placeholder}}`-based; complex ICU messages (nested select/plural syntax) are intentionally out of scope — use translation methods (functions in your translation classes) with `createPluralSelector`/`createIntlFormatters` instead.
+- **Merged translations are shallow.** With `useFallback`, merged results share nested references with the cached fallback translation — treat translations as read-only.
+- **Listener errors are re-thrown asynchronously.** A locale-change listener that throws will not break other listeners or the emitter, but the error surfaces as an uncaught exception (standard `queueMicrotask` re-throw, same pattern React uses). Wrap listener bodies in try/catch if you need custom handling.
 
 ## Contributing
 

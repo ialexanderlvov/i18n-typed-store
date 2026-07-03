@@ -1,11 +1,17 @@
 # i18n-typed-store Monorepo
 
+[![CI](https://github.com/ialexanderlvov/i18n-typed-store/actions/workflows/ci.yml/badge.svg)](https://github.com/ialexanderlvov/i18n-typed-store/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/i18n-typed-store.svg)](./LICENSE)
+
 Monorepo for i18n-typed-store libraries - a type-safe translation store with full TypeScript support.
 
 ## 📦 Packages
 
-- **[i18n-typed-store](./packages/i18n-typed-store/)** - Core library for working with translations
-- **[i18n-typed-store-react](./packages/i18n-typed-store-react/)** - React integration with hooks and components
+| Package                                                          | Version                                                                                                                 | Description                                                             |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **[i18n-typed-store](./packages/i18n-typed-store/)**             | [![npm](https://img.shields.io/npm/v/i18n-typed-store.svg)](https://www.npmjs.com/package/i18n-typed-store)             | Core library: store, interpolation, plurals, Intl formatters            |
+| **[i18n-typed-store-react](./packages/i18n-typed-store-react/)** | [![npm](https://img.shields.io/npm/v/i18n-typed-store-react.svg)](https://www.npmjs.com/package/i18n-typed-store-react) | React integration: hooks, Provider, Suspense, SSR helpers               |
+| **[i18n-typed-store-nest](./packages/i18n-typed-store-nest/)**   | [![npm](https://img.shields.io/npm/v/i18n-typed-store-nest.svg)](https://www.npmjs.com/package/i18n-typed-store-nest)   | NestJS integration: module, service, decorators, interceptor/middleware |
 
 ## 🚀 Quick Start
 
@@ -59,7 +65,8 @@ pnpm format:check
 .
 ├── packages/
 │   ├── i18n-typed-store/          # Core library
-│   └── i18n-typed-store-react/    # React integration
+│   ├── i18n-typed-store-react/    # React integration
+│   └── i18n-typed-store-nest/     # NestJS integration
 ├── nx.json                         # Nx configuration
 ├── pnpm-workspace.yaml             # pnpm workspace configuration
 └── tsconfig.base.json              # Base TypeScript config
@@ -141,6 +148,7 @@ Detailed documentation for each package can be found in their respective README 
 
 - [i18n-typed-store README](./packages/i18n-typed-store/README.md)
 - [i18n-typed-store-react README](./packages/i18n-typed-store-react/README.md)
+- [i18n-typed-store-nest README](./packages/i18n-typed-store-nest/README.md)
 
 ## 📄 License
 

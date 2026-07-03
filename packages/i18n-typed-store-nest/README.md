@@ -1,5 +1,9 @@
 # i18n-typed-store-nest
 
+[![npm version](https://img.shields.io/npm/v/i18n-typed-store-nest.svg)](https://www.npmjs.com/package/i18n-typed-store-nest)
+[![CI](https://github.com/ialexanderlvov/i18n-typed-store/actions/workflows/ci.yml/badge.svg)](https://github.com/ialexanderlvov/i18n-typed-store/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/i18n-typed-store-nest.svg)](https://github.com/ialexanderlvov/i18n-typed-store/blob/main/LICENSE)
+
 > ⚠️ **WARNING: The library API is under active development and may change significantly between versions. Use exact versions in package.json and carefully read the changelog when updating.**
 
 Type-safe translation store for NestJS with full TypeScript support. Integration of `i18n-typed-store` for NestJS applications with automatic locale detection from requests, decorators for convenient access to translations, and preload support.
@@ -173,12 +177,14 @@ I18nModule.forRoot<N, L, M>(options: I18nModuleOptions<N, L, M>): DynamicModule
 **Options:**
 
 - `store` - Translation store instance (required)
-- `defaultLocale` - Default locale (required)
+- `defaultLocale` - Default locale (required). Must be a key of `store.locales` — validated at configuration time with a descriptive error
 - `availableLocales` - Array of available locales for validation (optional)
 - `headerName` - Header name for extracting locale (default: `'accept-language'`)
 - `queryParamName` - Query parameter name for extracting locale (default: `'locale'`)
 - `cookieName` - Cookie name for extracting locale (default: `'locale'`)
 - `parseAcceptLanguage` - Whether to parse Accept-Language header (default: `true`)
+- `resolvers` - Locale detection sources applied in order (default: `['query', 'route', 'cookie', 'header']`). Entries are the built-in source names or custom functions `(request) => string | undefined`. Every detected value is matched against the store locales with BCP 47 rules — case-insensitive, with region/script fallbacks (`?locale=ru-RU` resolves to `'ru'`, `Accept-Language: EN-us` matches a `'en-US'` key)
+- `useGlobalInterceptor` - Whether to register `I18nInterceptor` globally via `APP_INTERCEPTOR` (default: `true`). When `false`, the exported `I18nInterceptor` can be wired manually (e.g. `@UseInterceptors(I18nInterceptor)`). For `forRootAsync` set this flag on the async options object itself
 - `preload` - Translation preload configuration:
     - `true` - preload all namespaces and locales
     - Object with settings:
@@ -240,18 +246,20 @@ async getData(@Locale() locale: string) {
 }
 ```
 
+`@I18nLang()` is exported as an alias of `@Locale()` for developers migrating from `nestjs-i18n`.
+
 ### `@Translation(namespace)`
 
 Gets the translation for the specified namespace. Translation is loaded automatically if not yet loaded:
 
 ```typescript
 @Get()
-async getData(@Translation('common') translation: CommonTranslationsEn) {
-  return translation.greeting;
+async getData(@Translation('common') translation: CommonTranslationsEn | undefined) {
+  return translation?.greeting;
 }
 ```
 
-**Important:** The `@Translation()` decorator automatically loads the translation if it is not yet loaded. This happens asynchronously, so the method must be `async`.
+**Important:** The `@Translation()` decorator automatically loads the translation if it is not yet loaded. This happens asynchronously, so the method must be `async`. If the translation fails to load, the parameter is `undefined` — the route is not failed with a 500.
 
 ## I18nService API
 
@@ -283,9 +291,14 @@ export class AppService {
 
 ### Methods
 
-#### `setLocale(locale: keyof L): void`
+#### `setLocale(locale: keyof L | string): void`
 
-Sets the current locale.
+Sets the active locale, scoped to where the call happens:
+
+- **Inside a request context** (bound by `I18nInterceptor` / `I18nMiddleware`): changes only this request's locale — identical to `setRequestLocale()`. Parallel requests are unaffected.
+- **Outside a request context** (bootstrap, CLI, workers): changes the store-wide default locale.
+
+Accepts an exact store key or a BCP 47 tag that resolves to one (`'ru-RU'` → `'ru'`); throws for unknown locales.
 
 ```typescript
 this.i18nService.setLocale('ru');
@@ -316,9 +329,9 @@ await this.i18nService.loadTranslation('common', 'en');
 await this.i18nService.loadTranslation('common'); // uses current locale
 ```
 
-#### `getTranslation(namespace: K, locale?: keyof L): Promise<M[K]>`
+#### `getTranslation(namespace: K, locale?: keyof L): Promise<M[K] | undefined>`
 
-Gets translation for the specified namespace. Automatically loads translation if not yet loaded.
+Gets translation for the specified namespace. Automatically loads translation if not yet loaded. Resolves to `undefined` when the load fails (the error state remains observable on the store).
 
 ```typescript
 const translation = await this.i18nService.getTranslation('common', 'en');
@@ -327,11 +340,11 @@ const translation = await this.i18nService.getTranslation('common'); // uses cur
 
 #### `getCurrentTranslation(namespace: K): M[K] | undefined`
 
-Gets the current translation for the specified namespace (without automatic loading).
+Gets the already-loaded translation for the specified namespace and the current locale — the per-request locale inside a request, the store default outside of one. Does not trigger loading. Safe under concurrent traffic: each request reads its own locale's cache slot.
 
 ```typescript
 const translation = this.i18nService.getCurrentTranslation('common');
-// Returns undefined if translation is not loaded
+// Returns undefined if translation is not loaded for the current locale
 ```
 
 #### `getTranslationByKey(key: Key, locale?: keyof L): GetTranslationValue<M, Key>`
@@ -413,8 +426,9 @@ export class AppController {
 
 1. Intercepts all incoming HTTP requests
 2. Extracts locale from request (query parameters, cookies, headers, route parameters)
-3. Sets locale in I18nService
-4. Attaches I18nService to request object for use in parameter decorators
+3. Binds the resolved locale to the request via `AsyncLocalStorage` (per-request, not on the
+   shared `I18nService` singleton) so concurrent requests never overwrite each other's locale
+4. Attaches `I18nService` to the request object for use in parameter decorators
 5. Continues with request processing
 
 ## Using Middleware (Alternative to Interceptor)
@@ -790,11 +804,12 @@ Service for working with translations and locales.
 
 ```typescript
 class I18nService<N, L, M> {
-	setLocale(locale: keyof L): void;
+	setLocale(locale: keyof L | string): void;
+	setRequestLocale(locale: keyof L | string | undefined): void;
 	getLocale(): keyof L;
 	getLocales(): L;
 	loadTranslation<K extends keyof N>(namespace: K, locale?: keyof L, fromCache?: boolean): Promise<void>;
-	getTranslation<K extends keyof N>(namespace: K, locale?: keyof L): Promise<M[K]>;
+	getTranslation<K extends keyof N>(namespace: K, locale?: keyof L): Promise<M[K] | undefined>;
 	getCurrentTranslation<K extends keyof N>(namespace: K): M[K] | undefined;
 	getTranslationByKey<Key extends TranslationKeys<M>>(key: Key, locale?: keyof L): GetTranslationValue<M, Key>;
 	getStore(): TranslationStore<N, L, M>;
@@ -803,7 +818,7 @@ class I18nService<N, L, M> {
 
 ### `I18nInterceptor`
 
-Global interceptor that automatically detects and sets locale from request. Registered automatically when using `I18nModule.forRoot()`.
+Global interceptor that automatically detects the request locale and binds it to the request scope. Registered automatically when using `I18nModule.forRoot()` unless `useGlobalInterceptor: false` is set. Works on HTTP and GraphQL contexts (the request is read from the GraphQL resolver context without depending on `@nestjs/graphql`); on WS/RPC contexts it binds the default locale instead of crashing.
 
 ### `I18nMiddleware`
 
