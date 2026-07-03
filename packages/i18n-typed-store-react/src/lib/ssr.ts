@@ -50,8 +50,18 @@ export interface GetLocaleFromRequestOptions {
  * @param availableLocales - Available locales
  * @param defaultLocale - Default locale to use if no match found
  * @returns Best matching locale
+ *
+ * @example
+ * ```ts
+ * parseAcceptLanguage('ru-RU,ru;q=0.9,en;q=0.8', ['en', 'ru'], 'en'); // => 'ru'
+ * parseAcceptLanguage(undefined, ['en', 'ru'], 'en'); // => 'en'
+ * ```
  */
-function parseAcceptLanguage(acceptLanguage: string | undefined, availableLocales: readonly string[], defaultLocale: string): string {
+export function parseAcceptLanguage(
+	acceptLanguage: string | undefined,
+	availableLocales: readonly string[],
+	defaultLocale: string,
+): string {
 	if (!acceptLanguage) {
 		return defaultLocale;
 	}

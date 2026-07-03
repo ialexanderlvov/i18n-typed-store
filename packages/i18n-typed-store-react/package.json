@@ -28,6 +28,13 @@
 		},
 		"./package.json": "./package.json"
 	},
+	"typesVersions": {
+		"*": {
+			"server": [
+				"./dist/server.d.ts"
+			]
+		}
+	},
 	"files": [
 		"dist"
 	],
