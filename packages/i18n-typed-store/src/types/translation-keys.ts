@@ -1,16 +1,23 @@
 /**
- * Internal: true only for plain object-like types we want to recurse into.
+ * Internal: true only for object-like types we want to recurse into.
  * Arrays and functions also structurally satisfy `Record<string, any>`, which
  * previously leaked their members (e.g. `items.length`, `items.map`, `items.0`)
  * into the valid-key union and let `GetTranslationValue` resolve them. They are
  * treated as terminal leaves here so the key union only contains real
  * translation paths.
+ *
+ * The object check MUST be `T extends object` (with arrays/functions excluded
+ * above), not `T extends Record<string, unknown>`: class instances and
+ * interfaces have no implicit index signature, so a `Record<string, unknown>`
+ * test rejects them — breaking class-based translations, the library's
+ * primary pattern (`getTranslationByKey('common.greeting')` stopped
+ * compiling when `common` was typed by a translation class).
  */
 type TraversableObject<T> = T extends readonly unknown[]
 	? false
 	: T extends (...args: any[]) => any
 		? false
-		: T extends Record<string, unknown>
+		: T extends object
 			? true
 			: false;
 

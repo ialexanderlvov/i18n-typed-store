@@ -117,12 +117,21 @@ export function getTranslation<
 		if (part === undefined) {
 			return miss();
 		}
-		// Only walk own enumerable properties. Without this guard, a key like
-		// `common.toString` or `common.__proto__.constructor` would resolve
-		// to inherited prototype members — leaking functions/objects to
+		// Never walk into the prototype machinery: a user-controlled key like
+		// `common.__proto__.constructor` must not resolve.
+		if (part === '__proto__' || part === 'constructor' || part === 'prototype') {
+			return miss();
+		}
+		// Class-based translations declare methods on the class prototype, so
+		// an own-property-only walk would miss them. Allow inherited members,
+		// but never ones supplied by Object.prototype itself (`toString`,
+		// `valueOf`, `hasOwnProperty`, …) — those would leak builtins to
 		// callers that pass user-controlled keys into `t()`.
 		if (!Object.prototype.hasOwnProperty.call(value, part)) {
-			return miss();
+			const inherited = part in value && !Object.prototype.hasOwnProperty.call(Object.prototype, part);
+			if (!inherited) {
+				return miss();
+			}
 		}
 		value = value[part];
 		if (value === undefined) {
