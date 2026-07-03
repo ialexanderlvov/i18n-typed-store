@@ -1,5 +1,12 @@
 # i18n-typed-store-react
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [fd828cc]
+    - i18n-typed-store@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes
