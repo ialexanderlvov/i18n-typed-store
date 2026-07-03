@@ -53,8 +53,11 @@ export function parseLocale(locale: string): ParsedLocale {
 				result.variant = parts[3];
 			}
 		}
-	} else if (parts[1] && (parts[1].length === 2 || parts[1].length === 3)) {
-		// It's a region (2-3 characters)
+	} else if (parts[1] && (/^[A-Za-z]{2}$/.test(parts[1]) || /^[0-9]{3}$/.test(parts[1]))) {
+		// It's a region: BCP 47 regions are exactly 2 letters (ISO 3166-1
+		// alpha-2, e.g. 'RU') or 3 digits (UN M.49, e.g. '419'). A 3-letter
+		// subtag like the one in 'en-abc' is NOT a region and falls through
+		// to the variant branch below.
 		result.region = parts[1].toUpperCase();
 		if (parts[2]) {
 			result.variant = parts[2];
@@ -151,15 +154,25 @@ export function findBestLocaleMatch(requestedLocale: string, availableLocales: R
 	// Get available locale keys
 	const availableKeys = Array.isArray(availableLocales) ? availableLocales : Object.keys(availableLocales);
 
+	// Parse every available key once up front. findBestLocaleMatch sits on the
+	// hot path (changeLocale / store.load); the previous implementation
+	// re-parsed every key via parseLocale inside multiple .filter()/.find()
+	// passes per candidate — O(candidates * keys) parse+regex+allocation calls.
+	// Insertion order is preserved, so match selection is byte-for-byte unchanged.
+	const parsedKeys = availableKeys.map((key) => {
+		const lower = key.toLowerCase();
+		return { key, lower, parsed: parseLocale(lower) };
+	});
+
 	// Generate candidates in order of preference
 	const candidates = generateLocaleCandidates(normalizedRequested);
 
 	// Try exact match first (case-insensitive)
 	for (const candidate of candidates) {
-		// Try exact match (case-insensitive)
-		const exactMatch = availableKeys.find((key) => key.toLowerCase() === candidate.toLowerCase());
+		const candidateLower = candidate.toLowerCase();
+		const exactMatch = parsedKeys.find((entry) => entry.lower === candidateLower);
 		if (exactMatch) {
-			return exactMatch;
+			return exactMatch.key;
 		}
 	}
 
@@ -168,10 +181,7 @@ export function findBestLocaleMatch(requestedLocale: string, availableLocales: R
 		const parsedCandidate = parseLocale(candidate);
 
 		// Find all locales with matching language
-		const languageMatches = availableKeys.filter((key) => {
-			const parsedKey = parseLocale(key.toLowerCase());
-			return parsedKey.language === parsedCandidate.language;
-		});
+		const languageMatches = parsedKeys.filter((entry) => entry.parsed.language === parsedCandidate.language);
 
 		if (languageMatches.length === 0) {
 			continue;
@@ -179,26 +189,20 @@ export function findBestLocaleMatch(requestedLocale: string, availableLocales: R
 
 		// If candidate has script, prefer locales with matching script
 		if (parsedCandidate.script) {
-			const scriptMatches = languageMatches.filter((key) => {
-				const parsedKey = parseLocale(key.toLowerCase());
-				return parsedKey.script === parsedCandidate.script;
-			});
+			const scriptMatches = languageMatches.filter((entry) => entry.parsed.script === parsedCandidate.script);
 
 			if (scriptMatches.length > 0) {
 				// If candidate has region, prefer locales with matching region
 				if (parsedCandidate.region) {
-					const regionMatches = scriptMatches.filter((key) => {
-						const parsedKey = parseLocale(key.toLowerCase());
-						return parsedKey.region === parsedCandidate.region;
-					});
+					const regionMatches = scriptMatches.filter((entry) => entry.parsed.region === parsedCandidate.region);
 
 					if (regionMatches.length > 0) {
-						return regionMatches[0];
+						return regionMatches[0].key;
 					}
 				}
 
 				// Return first script match
-				return scriptMatches[0];
+				return scriptMatches[0].key;
 			}
 
 			// If script is specified but doesn't match, skip this candidate
@@ -208,39 +212,30 @@ export function findBestLocaleMatch(requestedLocale: string, availableLocales: R
 
 		// If candidate has region (but no script or script didn't match), prefer locales with matching region
 		if (parsedCandidate.region) {
-			const regionMatches = languageMatches.filter((key) => {
-				const parsedKey = parseLocale(key.toLowerCase());
-				return parsedKey.region === parsedCandidate.region;
-			});
+			const regionMatches = languageMatches.filter((entry) => entry.parsed.region === parsedCandidate.region);
 
 			if (regionMatches.length > 0) {
-				return regionMatches[0];
+				return regionMatches[0].key;
 			}
 		}
 
 		// Return first language match without script as fallback (prefer simpler locales)
 		// Filter out locales with scripts to prefer base language
-		const simpleMatches = languageMatches.filter((key) => {
-			const parsedKey = parseLocale(key.toLowerCase());
-			return !parsedKey.script && !parsedKey.region;
-		});
+		const simpleMatches = languageMatches.filter((entry) => !entry.parsed.script && !entry.parsed.region);
 
 		if (simpleMatches.length > 0) {
-			return simpleMatches[0];
+			return simpleMatches[0].key;
 		}
 
 		// If no simple match, try to find locale without script but with region
-		const languageOnlyMatches = languageMatches.filter((key) => {
-			const parsedKey = parseLocale(key.toLowerCase());
-			return !parsedKey.script;
-		});
+		const languageOnlyMatches = languageMatches.filter((entry) => !entry.parsed.script);
 
 		if (languageOnlyMatches.length > 0) {
-			return languageOnlyMatches[0];
+			return languageOnlyMatches[0].key;
 		}
 
 		// If no simple match, return first language match
-		return languageMatches[0];
+		return languageMatches[0].key;
 	}
 
 	return null;

@@ -93,7 +93,18 @@ export class EventEmitter<Events extends EventMap = EventMap> {
 			return false;
 		}
 
-		[...set].forEach((listener) => listener(...args));
+		// Isolate listeners: one throwing listener must not prevent the remaining
+		// listeners (or the emit caller) from running. Surface the error
+		// asynchronously so it is neither swallowed nor allowed to abort the loop.
+		[...set].forEach((listener) => {
+			try {
+				listener(...args);
+			} catch (error) {
+				queueMicrotask(() => {
+					throw error;
+				});
+			}
+		});
 		return true;
 	}
 

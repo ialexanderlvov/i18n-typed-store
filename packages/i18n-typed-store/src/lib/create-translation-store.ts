@@ -52,6 +52,7 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 	useFallback = false,
 	fallbackLocale = defaultLocale,
 	changeLocaleEventName = 'change-locale',
+	onMissingKey,
 }: CreateTranslationStoreOptions<N, L, Module>) => {
 	// Validate inputs
 	validateNonEmptyObject(namespaces, 'namespaces');
@@ -62,6 +63,24 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 	if (useFallback) {
 		validateKeyInObject(fallbackLocale, locales, 'fallbackLocale', 'locales');
 	}
+
+	/**
+	 * Resolves an arbitrary locale value (exact key or BCP 47 tag) to a valid
+	 * locale key, falling back to defaultLocale when nothing matches.
+	 */
+	const resolveLocale = (locale: string | keyof L): keyof L => {
+		// `in` walks the prototype chain — guard against keys like
+		// `__proto__` / `constructor` that would otherwise pass.
+		if (Object.prototype.hasOwnProperty.call(locales, locale as PropertyKey)) {
+			return locale as keyof L;
+		}
+
+		// Try to find best matching locale using BCP 47 matching
+		const matchedLocale = findBestLocaleMatch(locale as string, locales);
+
+		// If no match found, fall back to defaultLocale
+		return matchedLocale ?? defaultLocale;
+	};
 
 	return {
 		/**
@@ -89,11 +108,31 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 			const namespaceModuleMap: TranslationModuleMap<N, L, Module> = createTranslationModuleMap(namespaces, locales, loadModule);
 			const emitter = new EventEmitter();
 
+			/**
+			 * After the current locale changes, point every namespace whose new
+			 * locale is already cached at that cached translation. Without this,
+			 * `currentTranslation` / `getTranslation()` keep serving the previous
+			 * locale even though the requested one is sitting in the cache.
+			 * Namespaces without a cached translation intentionally keep the old
+			 * one (no flash of missing keys) until `load()` completes.
+			 */
+			const refreshNamespacesForLocale = (locale: keyof L) => {
+				for (const namespaceKey of Object.keys(namespaces) as (keyof N)[]) {
+					const namespaceEntry = store.translations[namespaceKey];
+					const localeState = namespaceEntry.translations[locale];
+					if (localeState?.namespace !== undefined) {
+						namespaceEntry.currentTranslation = localeState.namespace;
+						namespaceEntry.currentLocale = locale;
+					}
+				}
+			};
+
 			const store = {
 				currentLocale: defaultLocale,
 				locales,
 				translationsMap: namespaces,
 				translations: {},
+				onMissingKey,
 				addChangeLocaleListener: (listener) => {
 					emitter.on(changeLocaleEventName, listener);
 				},
@@ -101,31 +140,76 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 					emitter.off(changeLocaleEventName, listener);
 				},
 				changeLocale: (locale: keyof L) => {
-					// `in` walks the prototype chain — guard against keys like
-					// `__proto__` / `constructor` that would otherwise pass.
-					if (Object.prototype.hasOwnProperty.call(locales, locale as PropertyKey)) {
-						store.currentLocale = locale as keyof L;
-						emitter.emit(changeLocaleEventName, locale as keyof L);
-						return;
-					}
-
-					// Try to find best matching locale using BCP 47 matching
-					const matchedLocale = findBestLocaleMatch(locale as string, locales);
-
-					if (matchedLocale) {
-						store.currentLocale = matchedLocale;
-						emitter.emit(changeLocaleEventName, matchedLocale);
-					} else {
-						// If no match found, fall back to defaultLocale
-						store.currentLocale = defaultLocale;
-						emitter.emit(changeLocaleEventName, defaultLocale);
-					}
+					const resolvedLocale = resolveLocale(locale);
+					store.currentLocale = resolvedLocale;
+					refreshNamespacesForLocale(resolvedLocale);
+					emitter.emit(changeLocaleEventName, resolvedLocale);
 				},
 			} as TranslationStore<N, L, M>;
 
 			// Initialize store structure for each namespace key
 			for (const namespaceKey of Object.keys(namespaces) as (keyof N)[]) {
-				// Create initial state for all locales
+				// Monotonic counter of load() calls for this namespace. Used to
+				// detect that another load started while ours was in flight, so a
+				// stale finisher never wipes a newer load's data (see
+				// deleteOtherLocalesAfterLoad below).
+				let loadGeneration = 0;
+
+				/**
+				 * Loads the fallback locale translation into its cache slot and
+				 * returns it. Deduplicates against an in-flight fetch for the same
+				 * locale. The stored `loadingPromise` REJECTS on failure — a
+				 * concurrent `load(fallbackLocale)` deduping onto it must observe
+				 * the failure instead of resolving successfully. This caller,
+				 * however, swallows the failure: a broken fallback must not fail
+				 * the main locale's load, the merge is simply skipped.
+				 */
+				const loadFallbackTranslation = async (): Promise<M[typeof namespaceKey] | undefined> => {
+					const fallbackState = store.translations[namespaceKey].translations[fallbackLocale];
+
+					if (fallbackState.namespace !== undefined) {
+						return fallbackState.namespace;
+					}
+
+					let promise = fallbackState.loadingPromise;
+					if (!promise) {
+						fallbackState.isError = false;
+						fallbackState.isLoading = true;
+
+						promise = (async () => {
+							// Defer the body one microtask so `loadingPromise` is
+							// assigned before any user code (loadModule) runs.
+							// Otherwise a synchronous throw would clear the slot in
+							// `finally` BEFORE the assignment below re-populates it
+							// with an already-rejected promise that never goes away.
+							await Promise.resolve();
+							try {
+								const fallbackModule = await namespaceModuleMap[namespaceKey][fallbackLocale]();
+								fallbackState.namespace = (await extractTranslation(
+									fallbackModule,
+									fallbackLocale,
+									namespaceKey,
+								)) as M[typeof namespaceKey];
+							} catch (error) {
+								fallbackState.isError = true;
+								throw error;
+							} finally {
+								fallbackState.isLoading = false;
+								fallbackState.loadingPromise = undefined;
+							}
+						})();
+
+						fallbackState.loadingPromise = promise;
+					}
+
+					try {
+						await promise;
+					} catch (_) {
+						// If fallback fails, continue with current translation only
+					}
+
+					return fallbackState.namespace;
+				};
 
 				store.translations[namespaceKey] = {
 					currentTranslation: undefined,
@@ -145,42 +229,35 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 						locale: string | keyof L = store.currentLocale || defaultLocale,
 						fromCache: boolean = loadFromCache,
 					): Promise<void> => {
-						// Resolve locale to a valid key
-						let resolvedLocale: keyof L;
+						const resolvedLocale = resolveLocale(locale);
+						const namespaceEntry = store.translations[namespaceKey];
+						const namespaceState = namespaceEntry.translations[resolvedLocale];
+						const generation = ++loadGeneration;
 
-						// Same prototype-chain caveat as in `changeLocale`: use
-						// `hasOwnProperty` so a malicious `?locale=__proto__`
-						// doesn't pass through to the module loader.
-						if (Object.prototype.hasOwnProperty.call(locales, locale as PropertyKey)) {
-							resolvedLocale = locale as keyof L;
-						} else {
-							// Try to find best matching locale using BCP 47 matching
-							const matchedLocale = findBestLocaleMatch(locale as string, locales);
-
-							if (matchedLocale) {
-								resolvedLocale = matchedLocale;
-							} else {
-								// If no match found, fall back to defaultLocale
-								resolvedLocale = defaultLocale;
-							}
-						}
-
-						const namespaceState = store.translations[namespaceKey].translations[resolvedLocale];
-
+						// Deduplicate against an in-flight fetch for this locale.
+						// Awaiting (rather than returning) the shared promise makes
+						// its failure THIS caller's failure too, and lets us apply
+						// this call's own post-condition afterwards: making the
+						// result current. That matters when the in-flight fetch is
+						// a bare fallback prefetch, which caches the translation
+						// but intentionally does not touch `currentTranslation`.
 						if (namespaceState.loadingPromise) {
-							return namespaceState.loadingPromise;
-						}
-
-						// Check if already loading to prevent duplicate requests
-						if (namespaceState.isLoading) {
+							await namespaceState.loadingPromise;
+							namespaceState.isError = false;
+							namespaceEntry.currentTranslation = namespaceState.namespace;
+							namespaceEntry.currentLocale = resolvedLocale;
 							return;
 						}
 
 						// Check cache if enabled
 						const shouldUseCache = namespaceState.namespace && fromCache !== false;
 						if (shouldUseCache) {
-							store.translations[namespaceKey].currentTranslation = namespaceState.namespace;
-							store.translations[namespaceKey].currentLocale = resolvedLocale;
+							// Serving valid cached data — clear a stale error flag
+							// left by a previously failed load so consumers don't
+							// render error UI alongside a perfectly good translation.
+							namespaceState.isError = false;
+							namespaceEntry.currentTranslation = namespaceState.namespace;
+							namespaceEntry.currentLocale = resolvedLocale;
 							return;
 						}
 
@@ -188,10 +265,11 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 						namespaceState.isError = false;
 						namespaceState.isLoading = true;
 
-						namespaceState.loadingPromise = (async () => {
+						const loadingPromise = (async () => {
+							// Defer the body one microtask — see the note in
+							// loadFallbackTranslation for why assignment must win.
+							await Promise.resolve();
 							try {
-								const namespaceState = store.translations[namespaceKey].translations[resolvedLocale];
-
 								// Load current locale translation
 								const loadedModule = await namespaceModuleMap[namespaceKey][resolvedLocale]();
 								let currentTranslation = (await extractTranslation(
@@ -202,52 +280,10 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 
 								// Load fallback if enabled and different from current locale
 								if (useFallback && resolvedLocale !== fallbackLocale) {
-									const fallbackState = store.translations[namespaceKey].translations[fallbackLocale];
-
-									// Check if fallback is already loaded
-									let fallbackTranslation: M[typeof namespaceKey] | undefined = fallbackState.namespace;
-
-									// If fallback is not loaded, load it
-									if (!fallbackTranslation) {
-										// Check if fallback is already loading
-										if (fallbackState.loadingPromise) {
-											await fallbackState.loadingPromise;
-											fallbackTranslation = fallbackState.namespace;
-										} else if (!fallbackState.isLoading) {
-											// Load fallback with proper promise handling
-											fallbackState.isError = false;
-											fallbackState.isLoading = true;
-
-											fallbackState.loadingPromise = (async () => {
-												try {
-													const fallbackModule = await namespaceModuleMap[namespaceKey][fallbackLocale]();
-													fallbackTranslation = (await extractTranslation(
-														fallbackModule,
-														fallbackLocale,
-														namespaceKey,
-													)) as M[typeof namespaceKey];
-													fallbackState.namespace = fallbackTranslation;
-												} catch (_) {
-													fallbackState.isError = true;
-													// If fallback fails, continue with current translation
-												} finally {
-													fallbackState.isLoading = false;
-													fallbackState.loadingPromise = undefined;
-												}
-											})();
-
-											await fallbackState.loadingPromise;
-											fallbackTranslation = fallbackState.namespace;
-										} else {
-											// Fallback is loading but no promise - this is a race condition edge case
-											// Skip fallback merge and use current translation only to avoid infinite waiting
-											// This shouldn't happen in normal flow, but we handle it gracefully
-											fallbackTranslation = undefined;
-										}
-									}
+									const fallbackTranslation = await loadFallbackTranslation();
 
 									// Merge current with fallback using smart merge
-									if (fallbackTranslation) {
+									if (fallbackTranslation !== undefined) {
 										currentTranslation = smartDeepMerge(
 											currentTranslation,
 											fallbackTranslation,
@@ -257,27 +293,40 @@ export const createTranslationStore = <N extends Record<string, string>, L exten
 
 								namespaceState.namespace = currentTranslation;
 
-								if (deleteOtherLocalesAfterLoad) {
-									for (const otherLocaleKey of Object.keys(
-										store.translations[namespaceKey].translations,
-									) as (keyof L)[]) {
-										if (otherLocaleKey !== resolvedLocale && otherLocaleKey !== store.currentLocale) {
-											store.translations[namespaceKey].translations[otherLocaleKey].namespace = undefined;
+								// Only the most recent load may clean up, and in-flight
+								// locales are never wiped: a slower finisher would
+								// otherwise delete data a concurrent load(otherLocale)
+								// has just fetched (or is about to store).
+								if (deleteOtherLocalesAfterLoad && generation === loadGeneration) {
+									// Never wipe: the locale we just resolved, the locale
+									// the user is currently viewing, or (when fallback is
+									// enabled) the fallback locale — it was just
+									// loaded/merged into this very load.
+									const keep = new Set<keyof L>([resolvedLocale, store.currentLocale]);
+									if (useFallback) {
+										keep.add(fallbackLocale);
+									}
+									for (const otherLocaleKey of Object.keys(namespaceEntry.translations) as (keyof L)[]) {
+										const otherState = namespaceEntry.translations[otherLocaleKey];
+										if (!keep.has(otherLocaleKey) && !otherState.isLoading && !otherState.loadingPromise) {
+											otherState.namespace = undefined;
 										}
 									}
 								}
-								store.translations[namespaceKey].currentTranslation = namespaceState.namespace;
-								store.translations[namespaceKey].currentLocale = resolvedLocale;
+								namespaceEntry.currentTranslation = namespaceState.namespace;
+								namespaceEntry.currentLocale = resolvedLocale;
 							} catch (error) {
 								namespaceState.isError = true;
 								throw error;
 							} finally {
 								namespaceState.isLoading = false;
-								namespaceState.loadingPromise = undefined; //
+								namespaceState.loadingPromise = undefined;
 							}
 						})();
 
-						return namespaceState.loadingPromise;
+						namespaceState.loadingPromise = loadingPromise;
+
+						return loadingPromise;
 					},
 				};
 			}

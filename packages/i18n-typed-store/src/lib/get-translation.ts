@@ -1,5 +1,6 @@
 import type { TranslationStore } from '../types/translation-store.js';
 import type { TranslationKeys, GetTranslationValue } from '../types/translation-keys.js';
+import { findBestLocaleMatch } from './locale-utils.js';
 
 /**
  * Gets a translation value by key from the translation store.
@@ -60,26 +61,47 @@ export function getTranslation<
 	L extends Record<string, string>,
 	M extends { [K in keyof N]: any },
 	Key extends TranslationKeys<M>,
->(store: TranslationStore<N, L, M>, key: Key, locale?: keyof L): GetTranslationValue<M, Key> {
+>(store: TranslationStore<N, L, M>, key: Key, locale?: string | keyof L): GetTranslationValue<M, Key> | Key {
 	if (!key || typeof key !== 'string') {
 		return key as GetTranslationValue<M, Key>;
 	}
 
 	const parts = key.split('.');
-	const targetLocale = locale || store.currentLocale;
+
+	// Resolve the locale the same way `load`/`changeLocale` do: exact key
+	// first, then BCP 47 best match (`en-US` → `en`). Without this, a tag
+	// those methods happily accept would silently miss the lookup here and
+	// return the key string. Falls back to the current locale when nothing
+	// matches. `hasOwnProperty` (not `in`) keeps `__proto__`-style keys out.
+	let targetLocale: keyof L;
+	if (locale === undefined || locale === null || locale === '') {
+		targetLocale = store.currentLocale;
+	} else if (Object.prototype.hasOwnProperty.call(store.locales, locale as PropertyKey)) {
+		targetLocale = locale as keyof L;
+	} else {
+		targetLocale = findBestLocaleMatch(String(locale), store.locales) ?? store.currentLocale;
+	}
+
 	const namespaceKey = parts[0] as keyof N;
+
+	// Reports the miss (if a handler is configured) and returns the key —
+	// the documented "not found" contract.
+	const miss = (): GetTranslationValue<M, Key> => {
+		store.onMissingKey?.(key, String(targetLocale));
+		return key as GetTranslationValue<M, Key>;
+	};
 
 	// `in` walks the prototype chain, so a key like `__proto__` would
 	// erroneously match. `hasOwnProperty` keeps the lookup to real namespaces.
 	if (!Object.prototype.hasOwnProperty.call(store.translations, namespaceKey as PropertyKey)) {
-		return key as GetTranslationValue<M, Key>;
+		return miss();
 	}
 
 	const namespaceState = store.translations[namespaceKey];
 	const translation = namespaceState.translations[targetLocale]?.namespace;
 
 	if (!translation) {
-		return key as GetTranslationValue<M, Key>;
+		return miss();
 	}
 
 	if (parts.length === 1) {
@@ -89,22 +111,22 @@ export function getTranslation<
 	let value: any = translation;
 	for (let i = 1; i < parts.length; i++) {
 		if (value === null || value === undefined || typeof value !== 'object') {
-			return key as GetTranslationValue<M, Key>;
+			return miss();
 		}
 		const part = parts[i];
 		if (part === undefined) {
-			return key as GetTranslationValue<M, Key>;
+			return miss();
 		}
 		// Only walk own enumerable properties. Without this guard, a key like
 		// `common.toString` or `common.__proto__.constructor` would resolve
 		// to inherited prototype members — leaking functions/objects to
 		// callers that pass user-controlled keys into `t()`.
 		if (!Object.prototype.hasOwnProperty.call(value, part)) {
-			return key as GetTranslationValue<M, Key>;
+			return miss();
 		}
 		value = value[part];
 		if (value === undefined) {
-			return key as GetTranslationValue<M, Key>;
+			return miss();
 		}
 	}
 

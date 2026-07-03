@@ -356,6 +356,12 @@ describe('createTranslationStore', () => {
 			const promise1 = store.translations.common.load('en');
 			const promise2 = store.translations.common.load('en');
 
+			// The fetch body starts on the next microtask (so loadingPromise is
+			// assigned before user code runs) — flush it before asserting.
+			await vi.waitFor(() => {
+				expect(loadModule).toHaveBeenCalled();
+			});
+
 			// Check that loadModule is called only once, even with two load calls
 			// This confirms that parallel loads are prevented
 			expect(loadModule).toHaveBeenCalledTimes(1);
@@ -365,13 +371,17 @@ describe('createTranslationStore', () => {
 			await promise2; // Both promises should resolve
 		});
 
-		it('should return early if isLoading is true without loadingPromise', async () => {
-			let resolveFirst: (value: any) => void;
-			const firstPromise = new Promise((resolve) => {
-				resolveFirst = resolve;
+		it('should recover and allow retry when loadModule throws synchronously', async () => {
+			// A synchronous throw from loadModule must not leave a permanently
+			// rejected promise in the loadingPromise slot — a subsequent load()
+			// has to be able to retry.
+			let shouldThrow = true;
+			const loadModule = vi.fn(() => {
+				if (shouldThrow) {
+					throw new Error('sync boom');
+				}
+				return Promise.resolve({ greeting: 'Hello' });
 			});
-
-			const loadModule = vi.fn(async () => firstPromise);
 			const extractTranslation = vi.fn((module) => module);
 
 			const storeFactory = createTranslationStore({
@@ -384,19 +394,16 @@ describe('createTranslationStore', () => {
 
 			const store = storeFactory.type<{ common: any }>();
 
-			// Start first load
-			const promise1 = store.translations.common.load('en');
+			await expect(store.translations.common.load('en')).rejects.toThrow('sync boom');
+			expect(store.translations.common.translations.en.isError).toBe(true);
+			expect(store.translations.common.translations.en.loadingPromise).toBeUndefined();
 
-			// Manually set isLoading to true (simulating race condition)
-			store.translations.common.translations.en.isLoading = true;
-			store.translations.common.translations.en.loadingPromise = undefined;
-
-			// Try to load again - should return early
-			const result = await store.translations.common.load('en');
-			expect(result).toBeUndefined();
-
-			resolveFirst!({ greeting: 'Hello' });
-			await promise1;
+			// Retry succeeds
+			shouldThrow = false;
+			await store.translations.common.load('en');
+			expect(store.translations.common.translations.en.namespace).toEqual({ greeting: 'Hello' });
+			expect(store.translations.common.translations.en.isError).toBe(false);
+			expect(store.translations.common.currentTranslation).toEqual({ greeting: 'Hello' });
 		});
 	});
 

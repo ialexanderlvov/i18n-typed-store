@@ -5,6 +5,12 @@
  *
  * This function is used internally for merging translations with fallback locale.
  *
+ * NOTE: the merge is shallow-copying by design — nested values are shared by
+ * reference with both inputs (translations may contain functions and class
+ * instances, which cannot be safely deep-cloned). Treat merged translations
+ * as read-only: mutating a nested object of the result also mutates the
+ * cached fallback translation shared with every other locale.
+ *
  * @param current - Current translation object
  * @param fallback - Fallback translation object
  * @returns Merged object with fallback values where structures differ
@@ -43,8 +49,20 @@ export function smartDeepMerge(current: any, fallback: any): any {
 		return current != null ? current : fallback;
 	}
 
-	// Both are objects - merge recursively
-	const result: any = { ...current };
+	// Both are objects - merge recursively.
+	// Build the base from `current`'s OWN enumerable props, skipping the
+	// prototype-polluting keys. A plain `{ ...current }` spread would copy an
+	// own `__proto__`/`constructor`/`prototype` key (which JSON.parse keeps as a
+	// real own-property) straight through into the result.
+	const result: any = {};
+	for (const key in current) {
+		if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+			continue;
+		}
+		if (Object.prototype.hasOwnProperty.call(current, key)) {
+			result[key] = current[key];
+		}
+	}
 
 	// Add missing keys from fallback
 	for (const key in fallback) {
@@ -60,8 +78,12 @@ export function smartDeepMerge(current: any, fallback: any): any {
 		if (!Object.prototype.hasOwnProperty.call(fallback, key)) {
 			continue;
 		}
-		if (!(key in result)) {
-			// Key doesn't exist in current, add from fallback
+		if (!Object.prototype.hasOwnProperty.call(result, key)) {
+			// Key doesn't exist in current, add from fallback.
+			// Use hasOwnProperty (not the prototype-walking `in` operator) so a
+			// fallback key named like an Object.prototype member (e.g. `toString`,
+			// `valueOf`, `hasOwnProperty`) is still copied instead of being
+			// silently dropped because it "exists" on the prototype chain.
 			result[key] = fallback[key];
 		} else {
 			// Key exists in both - check if structures differ
