@@ -1,6 +1,6 @@
 {
 	"name": "i18n-typed-store-react",
-	"version": "0.6.1",
+	"version": "0.6.2",
 	"description": "React bindings for i18n-typed-store — type-safe translations with hooks, Suspense and SSR support",
 	"main": "dist/index.js",
 	"module": "dist/index.mjs",

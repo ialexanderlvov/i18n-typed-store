@@ -30,9 +30,20 @@ export default defineConfig({
 	async onSuccess() {
 		await Promise.all(
 			CLIENT_OUTPUTS.map(async (file) => {
-				const content = await readFile(file, 'utf8');
-				if (!content.startsWith('"use client"') && !content.startsWith("'use client'")) {
-					await writeFile(file, CLIENT_DIRECTIVE + content);
+				const emittedContent = await readFile(file, 'utf8');
+				const content =
+					emittedContent.startsWith('"use client"') || emittedContent.startsWith("'use client'")
+						? emittedContent
+						: CLIENT_DIRECTIVE + emittedContent;
+
+				if (file.endsWith('.mjs') && /^export\s+\*\s+from\s+/m.test(content)) {
+					throw new Error(
+						'The client entry contains a wildcard re-export, which Next.js webpack cannot use as an RSC client boundary.',
+					);
+				}
+
+				if (content !== emittedContent) {
+					await writeFile(file, content);
 				}
 			}),
 		);

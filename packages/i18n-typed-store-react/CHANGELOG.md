@@ -1,5 +1,12 @@
 # i18n-typed-store-react
 
+## 0.6.2
+
+### Patch Changes
+
+- Make the root `"use client"` entry compatible with both Next.js webpack and
+  Turbopack builds by replacing its wildcard core re-export with named exports.
+
 ## 0.6.1
 
 ### Patch Changes
