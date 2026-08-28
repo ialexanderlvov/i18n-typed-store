@@ -61,7 +61,7 @@ describe('createIntlFormatters', () => {
 	it('formats numbers per locale', () => {
 		expect(en.number(1234.5)).toBe('1,234.5');
 		// ru uses a non-breaking space group separator and comma decimal
-		expect(ru.number(1234.5).replace(/ /g, ' ')).toBe('1 234,5');
+		expect(ru.number(1234.5).replace(/\u00a0/g, ' ')).toBe('1 234,5');
 	});
 
 	it('formats currency and percent', () => {

@@ -41,7 +41,9 @@ export const createPluralSelector = (
 	try {
 		pluralRules = new Intl.PluralRules(locale, intlOptions);
 	} catch (error) {
-		throw new TypeError(`Invalid locale format: ${locale}. ${error instanceof Error ? error.message : String(error)}`);
+		const localeError = new TypeError(`Invalid locale format: ${locale}. ${error instanceof Error ? error.message : String(error)}`);
+		Object.defineProperty(localeError, 'cause', { value: error, configurable: true });
+		throw localeError;
 	}
 
 	/**

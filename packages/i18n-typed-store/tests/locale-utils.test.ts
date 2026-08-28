@@ -644,6 +644,7 @@ describe('findBestLocaleMatch', () => {
 			} as const;
 
 			const result2 = findBestLocaleMatch('zh-Hans-SG', locales2);
+			expect(result2).toBe('zh-Hans-CN');
 			// Candidates: ['zh-Hans-SG', 'zh-Hans', 'zh-SG', 'zh']
 			// 'zh-Hans-SG' won't match exactly
 			// For 'zh-Hans-SG' candidate: has script 'Hans' and region 'SG'
@@ -676,6 +677,12 @@ describe('findBestLocaleMatch', () => {
 			const result = findBestLocaleMatch('en-CA', locales);
 			// Should prefer simple 'en' over specific regions when requested region not available
 			expect(result).toBe('en');
+		});
+
+		it('should prefer an exact variant-less fallback over another variant', () => {
+			const result = findBestLocaleMatch('en-US-posix', ['en-US-oxendict', 'en-US']);
+
+			expect(result).toBe('en-US');
 		});
 	});
 });

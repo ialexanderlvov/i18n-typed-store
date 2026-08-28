@@ -218,9 +218,14 @@ describe('concurrency & consistency fixes (core)', () => {
 
 			await store.translations.common.load('en');
 			await store.translations.common.load('ru');
+			expect(store.translations.common.currentTranslation).toEqual({ greeting: 'Hello' });
+
+			// A non-selected load only warms the cache. No load() is needed when
+			// selecting cached 'ru': changeLocale flips currentTranslation.
+			store.changeLocale('ru');
 			expect(store.translations.common.currentTranslation).toEqual({ greeting: 'Привет' });
 
-			// No load() needed: 'en' is cached, changeLocale alone must flip
+			// Selecting cached 'en' flips it back synchronously.
 			// currentTranslation so getTranslation() serves the right locale.
 			store.changeLocale('en');
 			expect(store.translations.common.currentTranslation).toEqual({ greeting: 'Hello' });

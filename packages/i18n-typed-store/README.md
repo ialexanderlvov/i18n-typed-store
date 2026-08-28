@@ -23,7 +23,8 @@ Type-safe translation store for managing i18n locales with full TypeScript suppo
 - ✅ **Fallback locales** - Automatic merging with fallback translations
 - ✅ **Caching** - Built-in translation caching for better performance
 - ✅ **Missing key reporting** - `onMissingKey` hook for logging/monitoring
-- ✅ **Event system** - Listen to locale changes
+- ✅ **Atomic locale transitions** - Load the requested namespaces before committing a locale
+- ✅ **Event system** - Listen to locale changes and namespace load-state updates
 - ✅ **BCP 47 locale support** - Advanced locale matching and parsing
 
 ## Installation
@@ -79,7 +80,7 @@ const storeFactory = createTranslationStore({
 	},
 	extractTranslation: (module) => {
 		// Extract translation from module (could be class instance, object, etc.)
-		return module.default || module;
+		return module.default ?? module;
 	},
 	defaultLocale: 'en',
 	useFallback: true,
@@ -171,7 +172,9 @@ function createTranslationStore<T, L, Module>(options: {
 - `changeLocaleEventName` - Event name for locale change events (default: `'change-locale'`)
 - `onMissingKey` - Optional handler `(key, locale) => void` called by `getTranslation` when a key cannot be resolved
 
-**Returns:** Object with `type<M>()` method that creates a typed store.
+**Returns:** Object with `type<M>()` method that creates a typed store. `M` must
+define every registered namespace; broader mapping types remain supported for
+backwards compatibility.
 
 **Example:**
 
@@ -186,7 +189,7 @@ const storeFactory = createTranslationStore({
 	loadModule: async (locale, namespace) => {
 		return await import(`./translations/${namespace}/${locale}.ts`);
 	},
-	extractTranslation: (module) => module.default || module,
+	extractTranslation: (module) => module.default ?? module,
 	defaultLocale: 'en',
 	useFallback: true,
 	fallbackLocale: 'en',
@@ -292,7 +295,9 @@ function getTranslation<N, L, M, Key extends TranslationKeys<M>>(
 ): GetTranslationValue<M, Key> | Key;
 ```
 
-> **Miss behavior:** if the namespace is not loaded for the target locale or the path does not resolve, `getTranslation` returns the **key string itself** (hence the `| Key` in the return type) and invokes the store's `onMissingKey` handler if one is configured. The `locale` argument accepts BCP 47 tags and resolves them the same way `load`/`changeLocale` do (`'en-US'` → `'en'`); an unmatched tag falls back to `store.currentLocale`.
+> **Read semantics:** without `locale`, the helper reads the safely activated `currentTranslation` for `store.currentLocale`, so a partial or failed atomic refresh cannot leak through the default lookup. Passing `locale` explicitly reads that locale's raw cache slot; this is useful for request-scoped server reads and cache inspection. BCP 47 tags resolve the same way `load`/`changeLocale` do (`'en-US'` → `'en'`), and an unmatched tag falls back to `store.currentLocale`.
+>
+> **Miss behavior:** if the chosen namespace is not loaded or the path does not resolve, `getTranslation` returns the **key string itself** (hence the `| Key` in the return type) and invokes the store's `onMissingKey` handler if one is configured.
 
 **Example:**
 
@@ -502,25 +507,61 @@ The store returned by `createTranslationStore().type<M>()` provides the followin
 ### Methods
 
 - `changeLocale(locale: string | keyof L): void` - Changes the current locale. If the locale string doesn't match exactly, it uses BCP 47 locale matching to find the best match (an unmatched locale falls back to `defaultLocale`). For every namespace whose new locale is **already cached**, `currentTranslation` is updated synchronously; namespaces without a cached translation keep the previous one (no flash of missing keys) until `load()` completes. Notifies all listeners.
-- `addChangeLocaleListener(listener: (locale: keyof L) => void): void` - Adds a listener for locale change events
-- `removeChangeLocaleListener(listener: (locale: keyof L) => void): void` - Removes a locale change listener
+- `preloadLocale(locale?, options?): Promise<void>` - Loads the requested namespaces (all by default) into the locale cache without changing `currentLocale` or the visible selected-locale translations. This is useful for warming a locale before a later synchronous `changeLocale()`.
+- `changeLocaleAsync(locale, options?): Promise<LocaleChangeResult<L>>` - Loads the requested namespaces (all by default), then commits the locale and those namespace pointers in one synchronous step. It returns `{ status: 'committed', locale }`, or `{ status: 'superseded', ... }` when a newer synchronous or asynchronous locale request won the race. A failed current request leaves the visible locale unchanged and rejects with `LocaleLoadError`.
+- `addChangeLocaleListener(listener): void` - Adds a listener that receives `(locale, metadata)`. Metadata identifies a synchronous or atomic commit; atomic metadata also reports the requested namespaces and the effective cache policy used by that operation.
+- `removeChangeLocaleListener(listener): void` - Removes a locale change listener.
+- `subscribeTranslationState(listener): () => void` - Subscribes to `{ namespace, locale }` invalidations for cache and load-state changes and returns an unsubscribe function. Read the referenced locale state's `namespace`, `isLoading`, `isError`, and `error` values after each notification.
 
 > **`changeLocale` + `load`:** changing the locale does **not** trigger network loading by itself. The typical flow is `store.changeLocale('ru')` followed by `await store.translations.<ns>.load('ru')` for each namespace in use (framework bindings do this for you).
+
+### Atomic locale changes
+
+Use `changeLocaleAsync` when a screen must never contain namespaces from different locales:
+
+```typescript
+import { LocaleLoadError } from 'i18n-typed-store';
+
+try {
+	const result = await store.changeLocaleAsync('ru-RU');
+	if (result.status === 'superseded') {
+		// A newer locale request is now authoritative; no error occurred.
+		return;
+	}
+	// store.currentLocale and every requested namespace current pointer now use ru.
+} catch (error) {
+	if (error instanceof LocaleLoadError) {
+		for (const [namespace, cause] of error.failures) {
+			console.error(namespace, cause);
+		}
+	}
+}
+```
+
+The operation targets all registered namespaces by default. Pass `options.namespaces` to make the atomic boundary match the namespaces needed by the current route or screen. Excluded namespace pointers are not published by that commit; framework bindings may load them separately if they are later rendered. Successful partial loads remain cached when another requested namespace fails, but no locale-change event is emitted and the previously visible locale stays active. `options.fromCache` controls cache reuse. Namespace rejection values are preserved unchanged in both `LocaleLoadError.failures` and the corresponding locale state's `error` field.
+
+For cache warming without a commit:
+
+```typescript
+await store.preloadLocale('ru', { fromCache: true });
+store.changeLocale('ru'); // synchronous because every namespace is cached
+```
 
 ### Namespace API
 
 Each namespace in `store.translations` provides:
 
-- `currentTranslation?: M[K]` - Currently active translation for this namespace
-- `currentLocale?: keyof L` - Locale of the current translation
+- `currentTranslation?: M[K]` - Last translation safely activated for the store-selected locale or published by an atomic commit
+- `currentLocale?: keyof L` - Locale of `currentTranslation`
 - `translations: Record<keyof L, {...}>` - Translations for all locales
-- `load(locale?: string | keyof L, fromCache?: boolean): Promise<void>` - Loads translation for a specific locale. If locale is not provided, uses `currentLocale` or `defaultLocale`. Uses BCP 47 locale matching if the locale string doesn't match exactly. **Rejects** if loading fails (and sets `isError` on the locale state) — including when the call deduplicates onto an already-in-flight load that fails. Concurrent `load()` calls for the same locale share a single fetch. A failed fallback load never fails the main locale's load — the fallback merge is simply skipped.
+- `load(locale?: string | keyof L, fromCache?: boolean): Promise<void>` - Loads translation for a specific locale. If locale is not provided, uses `currentLocale` or `defaultLocale`. Uses BCP 47 locale matching if the locale string doesn't match exactly. **Rejects** if loading fails (and sets `isError` plus the exact `error` on the locale state) — including when the call deduplicates onto an already-in-flight load that fails. Concurrent `load()` calls for the same locale share a single fetch. A failed fallback load never fails the main locale's load — the fallback merge is simply skipped. A load for the currently selected locale may update `current*`; loading another locale only warms its raw cache slot and cannot replace visible state.
 
 Each locale in `translations` provides:
 
 - `namespace?: M[K]` - Loaded translation data (undefined if not loaded yet)
 - `isLoading: boolean` - Whether translation is currently being loaded
 - `isError: boolean` - Whether an error occurred during loading
+- `error?: unknown` - Exact value thrown or rejected by the most recent failed load; cleared when a retry starts or valid cached data is accepted
 - `loadingPromise?: Promise<void>` - Promise for the ongoing loading operation
 
 ## Advanced Usage
@@ -936,10 +977,51 @@ type TranslationStore<N, L, M> = {
   locales: L;
   translationsMap: N;
   changeLocale: (locale: string | keyof L) => void;
-  addChangeLocaleListener: (listener: (locale: keyof L) => void) => void;
-  removeChangeLocaleListener: (listener: (locale: keyof L) => void) => void;
+  preloadLocale: (locale?: string | keyof L, options?: LocaleLoadOptions<N>) => Promise<void>;
+  changeLocaleAsync: (locale: string | keyof L, options?: LocaleLoadOptions<N>) => Promise<LocaleChangeResult<L>>;
+  addChangeLocaleListener: (listener: LocaleChangeListener<N, L>) => void;
+  removeChangeLocaleListener: (listener: LocaleChangeListener<N, L>) => void;
+  subscribeTranslationState: (listener: TranslationStateListener<keyof N, keyof L>) => () => void;
   translations: { [K in keyof N]: {...} };
 };
+
+type LocaleLoadOptions<N> = {
+  readonly fromCache?: boolean;
+  readonly namespaces?: readonly (keyof N)[];
+};
+
+type LocaleChangeMetadata<N> =
+  | {
+      readonly source: 'sync';
+      readonly loadedNamespaces: readonly [];
+    }
+  | {
+      readonly source: 'atomic';
+      readonly loadedNamespaces: readonly (keyof N)[];
+      readonly fromCache: boolean;
+    };
+
+type LocaleChangeListener<N, L> = (
+  locale: keyof L,
+  metadata: LocaleChangeMetadata<N>,
+) => void;
+
+type LocaleChangeResult<L> =
+  | { readonly status: 'committed'; readonly locale: keyof L }
+  | {
+      readonly status: 'superseded';
+      readonly locale: keyof L;
+      readonly currentLocale: keyof L;
+    };
+
+type TranslationStateEvent<NamespaceKey, LocaleKey> = {
+  readonly namespace: NamespaceKey;
+  readonly locale: LocaleKey;
+};
+
+type TranslationStateListener<NamespaceKey, LocaleKey> = (
+  event: TranslationStateEvent<NamespaceKey, LocaleKey>,
+) => void;
 
 type PluralVariants = {
   zero?: string;
@@ -995,6 +1077,7 @@ type IntlFormatters = {
 - `createPluralSelector(locale: string, options?: { strict?: boolean; intlOptions?: Intl.PluralRulesOptions }): (count: number, variants: PluralVariants) => string`
 - `getTranslation<N, L, M, Key>(store: TranslationStore<N, L, M>, key: Key, locale?: string | keyof L): GetTranslationValue<M, Key> | Key`
 - `getTranslationOrThrow<N, L, M, Key>(store: TranslationStore<N, L, M>, key: Key, locale?: string | keyof L): GetTranslationValue<M, Key>` — throws `TranslationMissingError` on a miss instead of returning the key
+- `LocaleLoadError` — `AggregateError` thrown by store-level locale loading; exposes `locale` and a readonly `failures` map containing each namespace's exact rejection value
 - `interpolate<S extends string>(template: S, params?: InterpolationParams<S>): string`
 - `createIntlFormatters(locale: string): IntlFormatters`
 - `parseLocale(locale: string): ParsedLocale`

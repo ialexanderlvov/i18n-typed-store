@@ -167,18 +167,23 @@ export function findBestLocaleMatch(requestedLocale: string, availableLocales: R
 	// Generate candidates in order of preference
 	const candidates = generateLocaleCandidates(normalizedRequested);
 
-	// Try exact match first (case-insensitive)
+	// Evaluate each candidate from most to least specific. An exact match wins
+	// for that candidate, otherwise a compatible script/region match is allowed
+	// before falling back to a less-specific candidate. Running exact matching
+	// for every candidate up front would let a base locale (`zh`) incorrectly
+	// beat an available same-script locale (`zh-Hans-CN`) for `zh-Hans-SG`.
 	for (const candidate of candidates) {
 		const candidateLower = candidate.toLowerCase();
 		const exactMatch = parsedKeys.find((entry) => entry.lower === candidateLower);
-		if (exactMatch) {
-			return exactMatch.key;
-		}
-	}
+		if (exactMatch) return exactMatch.key;
 
-	// Try partial matches - for each candidate, find best matching available locale
-	for (const candidate of candidates) {
 		const parsedCandidate = parseLocale(candidate);
+		// A variant is more specific than the next generated candidate. Do not
+		// substitute another variant before giving the exact variant-less fallback
+		// (for example `en-US`) a chance to match on the next iteration.
+		if (parsedCandidate.variant) {
+			continue;
+		}
 
 		// Find all locales with matching language
 		const languageMatches = parsedKeys.filter((entry) => entry.parsed.language === parsedCandidate.language);
@@ -201,7 +206,14 @@ export function findBestLocaleMatch(requestedLocale: string, availableLocales: R
 					}
 				}
 
-				// Return first script match
+				// Prefer a script-only locale over substituting a different region.
+				const scriptOnlyMatches = scriptMatches.filter((entry) => entry.parsed.region === undefined);
+				if (scriptOnlyMatches.length > 0) {
+					return scriptOnlyMatches[0].key;
+				}
+
+				// No script-only locale exists; a same-script locale is still a
+				// closer match than dropping the requested script entirely.
 				return scriptMatches[0].key;
 			}
 

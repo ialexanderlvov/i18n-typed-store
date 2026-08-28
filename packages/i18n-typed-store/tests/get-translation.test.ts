@@ -89,6 +89,7 @@ describe('getTranslation', () => {
 
 			await store.translations.common.load('en');
 
+			// @ts-expect-error -- exercise runtime behavior for an invalid key
 			const result = getTranslation(store, 'nonexistent.key');
 			expect(result).toBe('nonexistent.key');
 		});
@@ -122,6 +123,7 @@ describe('getTranslation', () => {
 
 			await store.translations.common.load('en');
 
+			// @ts-expect-error -- exercise runtime behavior for a missing key
 			const result = getTranslation(store, 'common.missing.key');
 			expect(result).toBe('common.missing.key');
 		});
@@ -145,6 +147,7 @@ describe('getTranslation', () => {
 
 			await store.translations.common.load('en');
 
+			// @ts-expect-error -- exercise runtime behavior for a missing nested key
 			const result = getTranslation(store, 'common.buttons.missing');
 			expect(result).toBe('common.buttons.missing');
 		});
@@ -239,6 +242,7 @@ describe('getTranslation', () => {
 
 			await store.translations.common.load('en');
 
+			// @ts-expect-error -- exercise runtime behavior for an empty key
 			expect(getTranslation(store, '')).toBe('');
 		});
 
@@ -327,7 +331,7 @@ describe('getTranslation', () => {
 			const storeFactory = createTranslationStore({
 				namespaces,
 				locales,
-				loadModule: async (locale, namespace) => {
+				loadModule: async (_locale, namespace) => {
 					if (namespace === 'common') return { greeting: 'Hello' };
 					if (namespace === 'errors') return { notFound: 'Not Found' };
 					return {};
@@ -414,7 +418,9 @@ describe('getTranslation', () => {
 
 			await store.translations.common.load('en');
 
+			// @ts-expect-error -- exercise runtime traversal through null
 			expect(getTranslation(store, 'common.value.nested')).toBe('common.value.nested');
+			// @ts-expect-error -- exercise runtime traversal through undefined
 			expect(getTranslation(store, 'common.undefinedValue.nested')).toBe('common.undefinedValue.nested');
 			expect(getTranslation(store, 'common.valid')).toBe('Valid');
 		});
@@ -442,8 +448,9 @@ describe('getTranslation', () => {
 			// Since split('.') always returns a dense array, we need to mock String.prototype.split
 			// to return an array with undefined at some index
 			const originalSplit = String.prototype.split;
-			const mockSplit = vi.fn().mockImplementation(function (separator?: string | RegExp, limit?: number) {
-				const result = originalSplit.call(this, separator, limit);
+			const mockSplit = vi.fn().mockImplementation(function (this: string, separator?: string | RegExp, limit?: number) {
+				const args = separator === undefined ? [] : [separator, limit];
+				const result = Reflect.apply(originalSplit, this, args) as string[];
 				// Create a sparse array by deleting an element at index 1
 				// This simulates the edge case where parts[i] could be undefined
 				if (result.length > 1 && typeof separator === 'string' && separator === '.') {

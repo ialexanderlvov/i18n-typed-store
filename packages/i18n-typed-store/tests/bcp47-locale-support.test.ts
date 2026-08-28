@@ -118,16 +118,19 @@ describe('BCP 47 locale support', () => {
 			const store = storeFactory.type<{ common: { greeting: string } }>();
 
 			// Test exact match
+			store.changeLocale('ru-RU');
 			await store.translations.common.load('ru-RU');
 			expect(store.translations.common.currentLocale).toBe('ru-RU');
 			expect(store.translations.common.currentTranslation?.greeting).toBe('Привет из России');
 
 			// Test fallback to language when region is not available
+			store.changeLocale('ru-BY');
 			await store.translations.common.load('ru-BY');
 			expect(store.translations.common.currentLocale).toBe('ru');
 			expect(store.translations.common.currentTranslation?.greeting).toBe('Привет');
 
 			// Test fallback to language when exact locale is not available
+			store.changeLocale('en-GB');
 			await store.translations.common.load('en-GB');
 			expect(store.translations.common.currentLocale).toBe('en');
 			expect(store.translations.common.currentTranslation?.greeting).toBe('Hello');
@@ -157,11 +160,13 @@ describe('BCP 47 locale support', () => {
 			const store = storeFactory.type<{ common: { greeting: string } }>();
 
 			// Test exact match with script and region
+			store.changeLocale('zh-Hans-CN');
 			await store.translations.common.load('zh-Hans-CN');
 			expect(store.translations.common.currentLocale).toBe('zh-Hans-CN');
 			expect(store.translations.common.currentTranslation?.greeting).toBe('你好（简体，中国）');
 
 			// Test fallback to script when region is not available
+			store.changeLocale('zh-Hans-TW');
 			await store.translations.common.load('zh-Hans-TW');
 			expect(store.translations.common.currentLocale).toBe('zh-Hans');
 			expect(store.translations.common.currentTranslation?.greeting).toBe('你好（简体）');
@@ -188,6 +193,7 @@ describe('BCP 47 locale support', () => {
 
 			const store = storeFactory.type<{ common: { greeting: string } }>();
 
+			store.changeLocale('ru');
 			await store.translations.common.load('ru');
 			expect(store.translations.common.currentLocale).toBe('ru');
 			expect(store.translations.common.currentTranslation?.greeting).toBe('Привет');

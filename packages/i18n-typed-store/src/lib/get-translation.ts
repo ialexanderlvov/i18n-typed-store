@@ -26,9 +26,10 @@ const MISSING: unique symbol = Symbol('i18n-typed-store.missing');
 
 /**
  * Shared lookup used by `getTranslation` and `getTranslationOrThrow`.
- * Resolves the locale (exact key first, then BCP 47 best match, falling back
- * to the current locale) and walks the dot-separated path. Returns the
- * MISSING sentinel on any miss so callers decide how to surface it.
+ * An omitted locale reads only the namespace translation safely committed for
+ * the store's current locale. An explicit locale reads that locale's raw cache
+ * slot (exact key first, then BCP 47 best match). Returns the MISSING sentinel
+ * on any miss so callers decide how to surface it.
  */
 function lookupTranslation<N extends Record<string, string>, L extends Record<string, string>, M extends { [K in keyof N]: any }>(
 	store: TranslationStore<N, L, M>,
@@ -36,13 +37,14 @@ function lookupTranslation<N extends Record<string, string>, L extends Record<st
 	locale?: string | keyof L,
 ): { value: unknown | typeof MISSING; targetLocale: keyof L } {
 	const parts = key.split('.');
+	const useCommittedTranslation = locale === undefined || locale === null || locale === '';
 
 	// Resolve the locale the same way `load`/`changeLocale` do: exact key
-	// first, then BCP 47 best match (`en-US` → `en`). Falls back to the
-	// current locale when nothing matches. `hasOwnProperty` (not `in`) keeps
+	// first, then BCP 47 best match (`en-US` → `en`). An omitted or unmatched
+	// locale resolves to the current locale. `hasOwnProperty` (not `in`) keeps
 	// `__proto__`-style keys out.
 	let targetLocale: keyof L;
-	if (locale === undefined || locale === null || locale === '') {
+	if (useCommittedTranslation) {
 		targetLocale = store.currentLocale;
 	} else if (Object.prototype.hasOwnProperty.call(store.locales, locale as PropertyKey)) {
 		targetLocale = locale as keyof L;
@@ -59,9 +61,13 @@ function lookupTranslation<N extends Record<string, string>, L extends Record<st
 	}
 
 	const namespaceState = store.translations[namespaceKey];
-	const translation = namespaceState.translations[targetLocale]?.namespace;
+	const translation = useCommittedTranslation
+		? namespaceState.currentLocale === store.currentLocale
+			? namespaceState.currentTranslation
+			: undefined
+		: namespaceState.translations[targetLocale]?.namespace;
 
-	if (!translation) {
+	if (translation === undefined) {
 		return { value: MISSING, targetLocale };
 	}
 
@@ -117,7 +123,9 @@ function lookupTranslation<N extends Record<string, string>, L extends Record<st
  *
  * @param store - Translation store instance
  * @param key - Translation key: "namespace" (returns namespace object), "namespace.key" or "namespace.nested.key" (fully typed)
- * @param locale - Optional locale (exact key or BCP 47 tag). If not provided, uses store.currentLocale
+ * @param locale - Optional locale (exact key or BCP 47 tag). Omit it to read
+ * only the translation safely committed for store.currentLocale; pass it to
+ * read that locale's raw cache slot
  * @returns Translation value (any type) or the key string if not found
  *
  * @example
@@ -194,7 +202,9 @@ export function getTranslation<
  *
  * @param store - Translation store instance
  * @param key - Translation key: "namespace", "namespace.key" or "namespace.nested.key" (fully typed)
- * @param locale - Optional locale (exact key or BCP 47 tag). If not provided, uses store.currentLocale
+ * @param locale - Optional locale (exact key or BCP 47 tag). Omit it to read
+ * only the translation safely committed for store.currentLocale; pass it to
+ * read that locale's raw cache slot
  * @returns Translation value with the exact inferred type
  * @throws {TranslationMissingError} If the key cannot be resolved (also invokes `onMissingKey` first)
  *

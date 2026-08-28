@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createTranslationStore } from '../src/lib/create-translation-store';
 
 describe('createTranslationStore', () => {
@@ -660,7 +660,7 @@ describe('createTranslationStore', () => {
 
 			store.changeLocale('ru');
 
-			expect(listener).toHaveBeenCalledWith('ru');
+			expect(listener).toHaveBeenCalledWith('ru', { source: 'sync', loadedNamespaces: [] });
 			expect(store.currentLocale).toBe('ru');
 		});
 
@@ -703,8 +703,8 @@ describe('createTranslationStore', () => {
 
 			store.changeLocale('ru');
 
-			expect(listener1).toHaveBeenCalledWith('ru');
-			expect(listener2).toHaveBeenCalledWith('ru');
+			expect(listener1).toHaveBeenCalledWith('ru', { source: 'sync', loadedNamespaces: [] });
+			expect(listener2).toHaveBeenCalledWith('ru', { source: 'sync', loadedNamespaces: [] });
 		});
 
 		it('should use custom event name if specified', () => {
@@ -724,7 +724,7 @@ describe('createTranslationStore', () => {
 
 			store.changeLocale('ru');
 
-			expect(listener).toHaveBeenCalledWith('ru');
+			expect(listener).toHaveBeenCalledWith('ru', { source: 'sync', loadedNamespaces: [] });
 		});
 	});
 

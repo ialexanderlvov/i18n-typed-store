@@ -17,10 +17,11 @@ describe('createPluralSelector', () => {
 		it('should throw TypeError for invalid locale format', () => {
 			// Mock Intl.PluralRules constructor to throw an error
 			const originalPluralRules = global.Intl.PluralRules;
+			const originalError = new Error('Invalid locale format');
 			const MockPluralRules = class extends originalPluralRules {
 				constructor(...args: any[]) {
 					super(...args);
-					throw new Error('Invalid locale format');
+					throw originalError;
 				}
 			} as any;
 
@@ -32,8 +33,15 @@ describe('createPluralSelector', () => {
 			});
 
 			try {
-				expect(() => createPluralSelector('invalid-locale-format')).toThrow(TypeError);
-				expect(() => createPluralSelector('invalid-locale-format')).toThrow(/Invalid locale format/);
+				let caught: unknown;
+				try {
+					createPluralSelector('invalid-locale-format');
+				} catch (error) {
+					caught = error;
+				}
+				expect(caught).toBeInstanceOf(TypeError);
+				expect(caught).toHaveProperty('message', expect.stringContaining('Invalid locale format'));
+				expect(caught).toHaveProperty('cause', originalError);
 			} finally {
 				// Restore original - keep configurable: true so next test can override
 				Object.defineProperty(global.Intl, 'PluralRules', {
