@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel an in-progress release on main. Pull-request checks remain
+  # safely replaceable when a newer commit is pushed.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
@@ -20,15 +22,15 @@ jobs:
         node-version: [20, 22, 24]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -39,11 +41,65 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Test
+        if: matrix.node-version != 24
         run: pnpm test
+
+      - name: Test with coverage
+        if: matrix.node-version == 24
+        run: pnpm test:coverage
 
       - name: Lint
         run: pnpm lint
 
       - name: Check formatting
         run: pnpm format:check
+
+  release:
+    name: Version or Publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      # Required for npm provenance (OIDC)
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Re-run the release gate in the publishing job as defense in depth.
+      - name: Verify release
+        run: pnpm prepublish
+
+      - name: Create release PR or publish to npm
+        uses: changesets/action@v1
+        with:
+          publish: pnpm changeset:publish
+          version: pnpm changeset:version
+          title: 'chore: release packages'
+          commit: 'chore: release packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Publish with provenance attestation (links the package to this workflow run)
+          NPM_CONFIG_PROVENANCE: 'true'

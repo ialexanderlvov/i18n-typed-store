@@ -10,6 +10,11 @@
 			"cache": true,
 			"inputs": ["default", "{workspaceRoot}/eslint.config.mts"]
 		},
+		"type-check": {
+			"cache": true,
+			"dependsOn": ["^build"],
+			"inputs": ["default", "^production", "{workspaceRoot}/tsconfig.base.json"]
+		},
 		"test": {
 			"cache": true,
 			"inputs": ["default", "^production", "{workspaceRoot}/packages/*/vitest.config.ts"]

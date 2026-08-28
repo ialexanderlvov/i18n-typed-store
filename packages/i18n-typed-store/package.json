@@ -24,7 +24,7 @@
 	"scripts": {
 		"build": "tsup",
 		"lint": "eslint .",
-		"type-check": "tsc --noEmit",
+		"type-check": "tsc --project tsconfig.test.json",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
 		"clean": "rm -rf dist"
@@ -61,6 +61,7 @@
 		"access": "public"
 	},
 	"devDependencies": {
-		"@vitest/coverage-v8": "4.1.9"
+		"@vitest/coverage-v8": "4.1.11",
+		"vitest": "4.1.11"
 	}
 }

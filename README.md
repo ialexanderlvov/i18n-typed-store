@@ -33,6 +33,12 @@ pnpm build
 pnpm test
 ```
 
+### Type-check Source and Tests
+
+```bash
+pnpm typecheck
+```
+
 ### Run Tests with Coverage
 
 ```bash
@@ -61,7 +67,7 @@ pnpm format:check
 
 ### Project Structure
 
-```
+```text
 .
 ├── packages/
 │   ├── i18n-typed-store/          # Core library
@@ -102,6 +108,9 @@ Nx automatically detects affected packages:
 # Build only affected packages
 pnpm affected:build
 
+# Type-check only affected packages
+pnpm affected:typecheck
+
 # Test only affected packages
 pnpm affected:test
 
@@ -120,6 +129,7 @@ pnpm graph
 ## 📝 Scripts
 
 - `build` - Build all packages
+- `typecheck` - Type-check package source and tests
 - `test` - Run all tests
 - `test:coverage` - Run tests with coverage
 - `lint` - Lint all packages

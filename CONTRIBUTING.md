@@ -4,17 +4,19 @@ Thanks for your interest in contributing to **i18n-typed-store**!
 
 ## Prerequisites
 
-- Node.js `>=20` (see `.nvmrc` for the version used in development; CI tests Node 20/22/24)
+- Node.js `>=20.19` for repository tooling (see `.nvmrc` for the version used in development; published packages still support Node `>=20`, and CI tests Node 20/22/24)
 - [pnpm](https://pnpm.io/) (the repo pins a version via `packageManager`)
 
 ## Getting started
 
 ```bash
 pnpm install
-pnpm build      # build all packages (tsup)
-pnpm test       # run all tests (vitest)
-pnpm lint       # lint all packages (eslint)
-pnpm format     # format with prettier
+pnpm build          # build all packages (tsup)
+pnpm typecheck      # type-check source code and tests
+pnpm test           # run all tests (vitest)
+pnpm test:coverage  # run tests and enforce coverage thresholds
+pnpm lint           # lint all packages (eslint)
+pnpm format         # format with prettier
 ```
 
 The repo is an [Nx](https://nx.dev) + pnpm monorepo with three packages under `packages/`:
@@ -28,8 +30,8 @@ The repo is an [Nx](https://nx.dev) + pnpm monorepo with three packages under `p
 ## Making changes
 
 1. Create a branch off `main`.
-2. Make your change with tests (`vitest`). Keep `pnpm test`, `pnpm lint`, and
-   `pnpm format:check` green.
+2. Make your change with tests (`vitest`). Keep `pnpm typecheck`, `pnpm test`,
+   `pnpm lint`, and `pnpm format:check` green.
 3. Add a changeset describing the change:
     ```bash
     pnpm changeset
@@ -47,14 +49,16 @@ The repo is an [Nx](https://nx.dev) + pnpm monorepo with three packages under `p
 ## CI
 
 Every push and pull request runs the CI workflow (`.github/workflows/ci.yml`):
-build, tests, lint, and format check across Node 20/22/24.
+build, type-check, tests, lint, and format check across Node 20/22/24. On Node 24,
+the test run also enforces package coverage thresholds.
 
 ## Releasing (maintainers)
 
 Releases are automated with [changesets/action](https://github.com/changesets/action)
-(`.github/workflows/release.yml`): merged changesets on `main` open/refresh a
-"release packages" PR; merging that PR publishes to npm with provenance.
-Requires the `NPM_TOKEN` repository secret.
+in `.github/workflows/ci.yml`: only after the complete Node 20/22/24 matrix
+succeeds, merged changesets on `main` open/refresh a "release packages" PR;
+merging that PR publishes to npm with provenance. Requires the `NPM_TOKEN`
+repository secret.
 
 Manual fallback:
 
