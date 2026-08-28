@@ -123,7 +123,7 @@ importers:
   packages/i18n-typed-store-react:
     dependencies:
       i18n-typed-store:
-        specifier: workspace:*
+        specifier: 0.6.0
         version: link:../i18n-typed-store
     devDependencies:
       '@types/react':

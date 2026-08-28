@@ -1,6 +1,6 @@
 {
 	"name": "i18n-typed-store-react",
-	"version": "0.6.0",
+	"version": "0.6.1",
 	"description": "React bindings for i18n-typed-store — type-safe translations with hooks, Suspense and SSR support",
 	"main": "dist/index.js",
 	"module": "dist/index.mjs",
@@ -40,6 +40,7 @@
 	],
 	"scripts": {
 		"build": "tsup",
+		"prepack": "npm run build",
 		"lint": "eslint .",
 		"type-check": "tsc --project tsconfig.test.json",
 		"test": "vitest run",
@@ -80,7 +81,7 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"i18n-typed-store": "workspace:*"
+		"i18n-typed-store": "0.6.0"
 	},
 	"peerDependencies": {
 		"react": "^18.0.0 || ^19.0.0"

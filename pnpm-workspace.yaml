@@ -1,6 +1,10 @@
 packages:
   - packages/*
 
+# Keep registry-compatible semver ranges in package manifests while resolving
+# matching packages from this workspace during local development.
+linkWorkspacePackages: true
+
 ignoredBuiltDependencies:
   - esbuild
 

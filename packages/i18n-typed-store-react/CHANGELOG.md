@@ -1,5 +1,13 @@
 # i18n-typed-store-react
 
+## 0.6.1
+
+### Patch Changes
+
+- Fix npm installs by publishing a registry-compatible `i18n-typed-store`
+  dependency instead of the workspace protocol.
+- Build the package automatically before packing or publishing it manually.
+
 ## 0.6.0
 
 ### Minor Changes
