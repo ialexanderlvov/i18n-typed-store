@@ -1,6 +1,6 @@
 {
 	"name": "i18n-typed-store",
-	"version": "0.5.1",
+	"version": "0.6.0",
 	"description": "Type-safe translation store for managing i18n locales with full TypeScript support",
 	"main": "dist/index.js",
 	"module": "dist/index.mjs",

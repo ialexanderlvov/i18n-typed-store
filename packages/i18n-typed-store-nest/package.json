@@ -1,6 +1,6 @@
 {
 	"name": "i18n-typed-store-nest",
-	"version": "0.5.1",
+	"version": "0.6.0",
 	"description": "NestJS module for i18n-typed-store — request-scoped type-safe translations with locale detection",
 	"main": "dist/index.js",
 	"module": "dist/index.mjs",
