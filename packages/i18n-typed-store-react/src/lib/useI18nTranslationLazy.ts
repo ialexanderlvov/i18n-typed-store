@@ -1,16 +1,16 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { isThenable } from './isThenable';
 import { useI18nTypedStoreContext } from './useI18nTypedStoreContext';
-
-/**
- * Last load error per locale slot, keyed by the store's per-locale state
- * object (whose identity is stable for the lifetime of the store). The store
- * itself only records a boolean `isError`, but when the very first load fails
- * and there is nothing at all to render, this hook must throw the ACTUAL
- * error so an ErrorBoundary can display it. A module-level WeakMap survives
- * Suspense retries — hook state does not, because a component that suspends
- * on its first render is mounted again from scratch.
- */
-const lastLoadErrors = new WeakMap<object, unknown>();
+import type { I18nLoadErrorContext } from '../types/context';
+import {
+	deleteSuspenseLoadRecord,
+	getSuspenseLoadRecord,
+	markSuspenseLoadRecordSuccessful,
+	replaceSuspenseLoadRecord,
+	scheduleCommittedSuspenseRecordCleanup,
+	suspenseLoadOwnerKey,
+	type SuspenseLoadOwner,
+} from './suspenseLoadRecords';
 
 /**
  * Immutable view of everything the render logic reads from the mutable store.
@@ -18,13 +18,15 @@ const lastLoadErrors = new WeakMap<object, unknown>();
  * useSyncExternalStore the identity-stable value it requires.
  */
 interface LazyTranslationSnapshot<T, LocaleKey> {
-	/** Active locale of the store at snapshot time */
+	/** Current locale of the store at snapshot time */
 	locale: LocaleKey;
-	/** Loaded translation for the active locale, if any */
+	/** Safely committed translation for the current locale, if any */
 	active: T | undefined;
-	/** Whether the last load for the active locale failed */
+	/** Whether the last load for the current locale failed */
 	isError: boolean;
-	/** Last successfully activated translation for this namespace (any locale) */
+	/** Exact value rejected or thrown by the last failed load */
+	error: unknown;
+	/** Last translation committed by the store; `lastLocale` identifies its locale */
 	lastTranslation: T | undefined;
 	/** Locale that `lastTranslation` belongs to */
 	lastLocale: LocaleKey | undefined;
@@ -34,8 +36,9 @@ interface LazyTranslationSnapshot<T, LocaleKey> {
  * Hook for accessing translations with lazy loading and Suspense support.
  * Throws a Promise if the translation is not yet loaded so React Suspense
  * can render the fallback. Always returns a translation object on resume;
- * if the very first load fails and no data exists at all, the load error
- * itself is thrown so an ErrorBoundary can catch it.
+ * if the very first load fails and no data exists at all, the load rejection
+ * is thrown so an ErrorBoundary can catch it. Reasonless and thenable
+ * rejection values are wrapped in a diagnostic Error at the React boundary.
  *
  * State is read through useSyncExternalStore, so renders cannot tear under
  * concurrent rendering and no store update can be lost in the window between
@@ -58,7 +61,7 @@ interface LazyTranslationSnapshot<T, LocaleKey> {
  * @param fromCache - Whether to use cached translation if available (default: true)
  * @returns Translation object for the specified namespace (never undefined)
  * @throws Promise if translation is not yet loaded (for React Suspense)
- * @throws The load error when loading failed and no translation exists at all
+ * @throws The load rejection (or its diagnostic wrapper) when loading failed and no translation exists at all
  *
  * @example
  * ```tsx
@@ -85,7 +88,9 @@ export const useI18nTranslationLazy = <
 	namespace: K,
 	fromCache: boolean = true,
 ): M[K] => {
-	const { store, suspenseMode } = useI18nTypedStoreContext<N, L, M>();
+	const context = useI18nTypedStoreContext<N, L, M>();
+	const { store, suspenseMode, shouldThrowLoadError } = context;
+	const suspenseLoadOwner = (context as typeof context & { [suspenseLoadOwnerKey]?: SuspenseLoadOwner })[suspenseLoadOwnerKey];
 
 	type Snapshot = LazyTranslationSnapshot<M[K], keyof L>;
 
@@ -107,17 +112,19 @@ export const useI18nTranslationLazy = <
 			const localeState = namespaceEntry.translations[locale];
 			const next: Snapshot = {
 				locale,
-				active: localeState?.namespace as M[K] | undefined,
+				active: namespaceEntry.currentLocale === locale ? (namespaceEntry.currentTranslation as M[K] | undefined) : undefined,
 				isError: localeState?.isError === true,
+				error: localeState?.error,
 				lastTranslation: namespaceEntry.currentTranslation as M[K] | undefined,
 				lastLocale: namespaceEntry.currentLocale,
 			};
 			if (
 				cached &&
 				cached.locale === next.locale &&
-				cached.active === next.active &&
+				Object.is(cached.active, next.active) &&
 				cached.isError === next.isError &&
-				cached.lastTranslation === next.lastTranslation &&
+				Object.is(cached.error, next.error) &&
+				Object.is(cached.lastTranslation, next.lastTranslation) &&
 				cached.lastLocale === next.lastLocale
 			) {
 				return cached;
@@ -143,44 +150,67 @@ export const useI18nTranslationLazy = <
 			// store's `isError`, hence the rejection is handled here and never
 			// escapes as an unhandled promise rejection.
 			const triggerLoad = () => {
-				const localeState = store.translations[namespace].translations[store.currentLocale];
-				store.translations[namespace]
-					.load(store.currentLocale, fromCache)
-					.catch((error: unknown) => {
-						if (localeState) {
-							lastLoadErrors.set(localeState, error);
-						}
-					})
-					.finally(notify);
+				store.translations[namespace].load(store.currentLocale, fromCache).catch(() => undefined);
 			};
 
-			const listener = () => {
+			const localeListener: Parameters<typeof store.addChangeLocaleListener>[0] = (_locale, metadata) => {
 				// Re-render immediately — changeLocale() synchronously activates
 				// the new locale when it is already cached...
 				notify();
-				// ...and fetch it when missing (or always, when caching is off).
-				if (store.translations[namespace].translations[store.currentLocale]?.namespace === undefined || fromCache === false) {
+				// Suppress a duplicate only when the atomic transaction force-refreshed
+				// this namespace. A cached atomic commit does not satisfy this hook's
+				// own `fromCache=false` contract.
+				const refreshedByAtomicChange =
+					metadata.source === 'atomic' && metadata.fromCache === false && metadata.loadedNamespaces.includes(namespace);
+				const namespaceEntry = store.translations[namespace];
+				// Synchronous changes preserve the existing fetch behaviour. A scoped
+				// atomic commit must also activate an excluded namespace's preloaded
+				// cache when its committed pointer still belongs to the old locale.
+				if (
+					!refreshedByAtomicChange &&
+					(namespaceEntry.currentLocale !== store.currentLocale ||
+						namespaceEntry.translations[store.currentLocale]?.namespace === undefined ||
+						fromCache === false)
+				) {
 					triggerLoad();
 				}
 			};
-			store.addChangeLocaleListener(listener);
+			const unsubscribeTranslationState = store.subscribeTranslationState((event) => {
+				if (event.namespace === namespace) {
+					notify();
+				}
+			});
+			store.addChangeLocaleListener(localeListener);
 
 			// Backfill if not loaded yet (e.g. right after a Suspense resume).
-			if (store.translations[namespace].translations[store.currentLocale]?.namespace === undefined) {
+			const localeState = store.translations[namespace].translations[store.currentLocale];
+			const suspenseLoadRecord = getSuspenseLoadRecord(localeState, suspenseLoadOwner);
+			const resumedFromSuccessfulSuspenseLoad =
+				suspenseLoadRecord?.status === 'success' && Object.is(suspenseLoadRecord.translation, localeState.namespace);
+			if (resumedFromSuccessfulSuspenseLoad) {
+				scheduleCommittedSuspenseRecordCleanup(localeState, suspenseLoadRecord);
+			}
+			const committedLocaleMismatch = store.translations[namespace].currentLocale !== store.currentLocale;
+			if (
+				localeState.namespace === undefined ||
+				committedLocaleMismatch ||
+				(fromCache === false && !resumedFromSuccessfulSuspenseLoad)
+			) {
 				triggerLoad();
 			}
 
 			return () => {
 				disposed = true;
-				store.removeChangeLocaleListener(listener);
+				store.removeChangeLocaleListener(localeListener);
+				unsubscribeTranslationState();
 			};
 		};
 
 		return [subscribe, getSnapshot] as const;
-	}, [store, namespace, fromCache]);
+	}, [store, namespace, fromCache, suspenseLoadOwner]);
 
 	const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-	const { locale, active, isError, lastTranslation, lastLocale } = snapshot;
+	const { locale, active, isError, error, lastTranslation, lastLocale } = snapshot;
 
 	/**
 	 * Starts (or joins — load() deduplicates) the load for the active locale
@@ -189,27 +219,79 @@ export const useI18nTranslationLazy = <
 	 */
 	const suspendOnLoad = (): never => {
 		const localeState = store.translations[namespace].translations[locale];
-		const loadPromise = store.translations[namespace].load(locale, fromCache);
-		loadPromise.catch((error: unknown) => {
-			if (localeState) {
-				lastLoadErrors.set(localeState, error);
-			}
-		});
+		// `load()` synchronously invalidates translation state before returning its
+		// promise. Defer that mutation until after React finishes the current render;
+		// otherwise an already-mounted observer of this namespace is updated while
+		// another component is rendering and React reports a cross-render update.
+		// Multiple wrappers scheduled by concurrent renders still converge on the
+		// core store's in-flight promise and therefore perform one physical load.
+		const loadPromise = Promise.resolve().then(() => store.translations[namespace].load(locale, fromCache));
+		// Server renders never install the subscription that consumes a successful
+		// marker. Avoid retaining one timer/closure per request and namespace there;
+		// the thrown promise alone is sufficient for streaming-capable renderers.
+		if (typeof window === 'undefined') {
+			throw loadPromise;
+		}
+		const record = replaceSuspenseLoadRecord(localeState, suspenseLoadOwner);
+		loadPromise.then(
+			() => {
+				markSuspenseLoadRecordSuccessful(localeState, record, localeState.namespace);
+			},
+			() => {
+				deleteSuspenseLoadRecord(localeState, record);
+			},
+		);
 		throw loadPromise;
 	};
 
-	// Never re-throw a load promise for a locale whose last load errored: each
-	// throw starts a fresh failing load, which React would retry forever (an
-	// infinite Suspense loop). Errors degrade to the last good translation, or
-	// are re-thrown as errors, below.
+	const hasActiveTranslation = active !== undefined;
+	const hasPreviousTranslation = lastTranslation !== undefined;
+
+	if (isError) {
+		const context = {
+			error,
+			namespace,
+			locale,
+			hasPreviousTranslation,
+			hasActiveTranslation,
+		} as I18nLoadErrorContext<N, L>;
+		const policyRequestsThrow =
+			shouldThrowLoadError === true || (typeof shouldThrowLoadError === 'function' && shouldThrowLoadError(context));
+
+		// Without any renderable translation the hook must throw regardless of an
+		// explicitly permissive policy: returning undefined would violate M[K].
+		if ((!hasActiveTranslation && !hasPreviousTranslation) || policyRequestsThrow) {
+			// Preserve ordinary rejection values. `undefined` cannot give an Error
+			// Boundary a useful value, while a thenable would be mistaken for a fresh
+			// Suspense signal. Wrap only those two cases at the React throw boundary;
+			// the exact reason remains available in core state and to the policy.
+			if (error !== undefined && !isThenable(error)) {
+				throw error;
+			}
+			const diagnosticError = new Error(
+				`Failed to load translation for namespace "${String(namespace)}" and locale "${String(locale)}"`,
+			);
+			if (error !== undefined) {
+				Object.defineProperty(diagnosticError, 'cause', { value: error, configurable: true });
+			}
+			throw diagnosticError;
+		}
+
+		// A permissive policy is only reachable when at least one renderable
+		// translation exists; the no-data branch above always throws.
+		if (hasActiveTranslation) {
+			return active as M[K];
+		}
+		return lastTranslation as M[K];
+	}
 
 	// first-load-locale: suspend until THIS locale has loaded for the first time.
-	if (suspenseMode === 'first-load-locale' && active === undefined && !isError) {
+	if (suspenseMode === 'first-load-locale' && active === undefined) {
 		suspendOnLoad();
 	}
 
 	// change-locale: suspend on every switch until the new locale becomes active.
-	if (suspenseMode === 'change-locale' && lastLocale !== locale && !isError) {
+	if (suspenseMode === 'change-locale' && lastLocale !== locale) {
 		suspendOnLoad();
 	}
 
@@ -225,31 +307,7 @@ export const useI18nTranslationLazy = <
 		return lastTranslation;
 	}
 
-	// Reuse `currentTranslation` only when it actually belongs to the active
-	// locale — returning a *different* locale's data here would render stale,
-	// wrong-language text after a locale switch.
-	if (lastTranslation !== undefined && lastLocale === locale) {
-		return lastTranslation;
-	}
-
-	// No data for the active locale yet and no error: suspend until it arrives
-	// (requires a <Suspense> boundary).
-	if (!isError) {
-		suspendOnLoad();
-	}
-
-	// The load failed but an earlier translation exists — degrade to the last
-	// good value instead of looping through failing loads.
-	if (lastTranslation !== undefined) {
-		return lastTranslation;
-	}
-
-	// No data at all and the load failed: throw the load error itself so an
-	// ErrorBoundary catches it — returning undefined here would violate the
-	// M[K] contract this hook promises.
-	const failedState = store.translations[namespace].translations[locale];
-	if (failedState && lastLoadErrors.has(failedState)) {
-		throw lastLoadErrors.get(failedState);
-	}
-	throw new Error(`Failed to load translation for namespace "${String(namespace)}" and locale "${String(locale)}"`);
+	// No data exists and no load error was recorded: suspend until it arrives.
+	// The error branch above either returned a safe translation or threw.
+	return suspendOnLoad();
 };

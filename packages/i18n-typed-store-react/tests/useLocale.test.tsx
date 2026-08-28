@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { I18nTypedStoreProvider, useI18nLocale } from '../src/index';
 import { renderToString } from 'react-dom/server';
@@ -46,6 +46,26 @@ describe('useI18nLocale', () => {
 		});
 
 		expect(typeof result.current.setLocale).toBe('function');
+		expect(typeof result.current.setLocaleFromTag).toBe('function');
+		expect(typeof result.current.setLocaleAsync).toBe('function');
+		expect(typeof result.current.setLocaleFromTagAsync).toBe('function');
+	});
+
+	it('should forward an atomic async locale change and return its result', async () => {
+		const store = createTestStore();
+		const changeLocaleAsyncSpy = vi.spyOn(store, 'changeLocaleAsync');
+		const { result } = renderHook(() => useI18nLocale<typeof namespaces, typeof locales, { common: { greeting: string } }>(), {
+			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
+		});
+
+		let transition: Awaited<ReturnType<typeof store.changeLocaleAsync>> | undefined;
+		await act(async () => {
+			transition = await result.current.setLocaleAsync('ru', { fromCache: false, namespaces: ['common'] });
+		});
+
+		expect(changeLocaleAsyncSpy).toHaveBeenCalledWith('ru', { fromCache: false, namespaces: ['common'] });
+		expect(transition).toEqual({ status: 'committed', locale: 'ru' });
+		expect(result.current.locale).toBe('ru');
 	});
 
 	it('should update locale when setLocale is called', async () => {
@@ -66,6 +86,38 @@ describe('useI18nLocale', () => {
 		});
 
 		expect(store.currentLocale).toBe('ru');
+	});
+
+	it('should accept and resolve a BCP 47 locale string', () => {
+		const store = createTestStore();
+		const { result } = renderHook(() => useI18nLocale<typeof namespaces, typeof locales, { common: { greeting: string } }>(), {
+			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
+		});
+		const requestedLocale: string = 'ru-RU';
+
+		act(() => {
+			result.current.setLocaleFromTag(requestedLocale);
+		});
+
+		expect(result.current.locale).toBe('ru');
+	});
+
+	it('should forward an explicit BCP 47 tag through the atomic setter', async () => {
+		const store = createTestStore();
+		const changeLocaleAsyncSpy = vi.spyOn(store, 'changeLocaleAsync');
+		const { result } = renderHook(() => useI18nLocale<typeof namespaces, typeof locales, { common: { greeting: string } }>(), {
+			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
+		});
+		const requestedLocale: string = 'ru-RU';
+		let transition: Awaited<ReturnType<typeof store.changeLocaleAsync>> | undefined;
+
+		await act(async () => {
+			transition = await result.current.setLocaleFromTagAsync(requestedLocale, { namespaces: ['common'] });
+		});
+
+		expect(changeLocaleAsyncSpy).toHaveBeenCalledWith('ru-RU', { namespaces: ['common'] });
+		expect(transition).toEqual({ status: 'committed', locale: 'ru' });
+		expect(result.current.locale).toBe('ru');
 	});
 
 	it('should update when locale changes through store.changeLocale', async () => {
@@ -179,7 +231,7 @@ describe('useI18nLocale', () => {
 
 			// Test exact match
 			act(() => {
-				result.current.setLocale('ru-RU');
+				result.current.setLocaleFromTag('ru-RU');
 			});
 
 			await waitFor(() => {
@@ -188,7 +240,7 @@ describe('useI18nLocale', () => {
 
 			// Test fallback to language when region is not available
 			act(() => {
-				result.current.setLocale('ru-BY');
+				result.current.setLocaleFromTag('ru-BY');
 			});
 
 			await waitFor(() => {
@@ -197,7 +249,7 @@ describe('useI18nLocale', () => {
 
 			// Test fallback to language when exact locale is not available
 			act(() => {
-				result.current.setLocale('en-GB');
+				result.current.setLocaleFromTag('en-GB');
 			});
 
 			await waitFor(() => {
@@ -206,12 +258,24 @@ describe('useI18nLocale', () => {
 
 			// Test fallback to defaultLocale when no match found
 			act(() => {
-				result.current.setLocale('fr-FR');
+				result.current.setLocaleFromTag('fr-FR');
 			});
 
 			await waitFor(() => {
 				expect(result.current.locale).toBe('en');
 			});
 		});
+	});
+
+	it('keeps configured locale setters type-safe and exposes explicit tag setters', () => {
+		const store = createTestStore();
+		const { result } = renderHook(() => useI18nLocale<typeof namespaces, typeof locales, { common: { greeting: string } }>(), {
+			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
+		});
+
+		expectTypeOf(result.current.setLocale).parameter(0).toEqualTypeOf<keyof typeof locales>();
+		expectTypeOf(result.current.setLocaleFromTag).parameter(0).toEqualTypeOf<string>();
+		expectTypeOf(result.current.setLocaleAsync).parameter(0).toEqualTypeOf<keyof typeof locales>();
+		expectTypeOf(result.current.setLocaleFromTagAsync).parameter(0).toEqualTypeOf<string>();
 	});
 });

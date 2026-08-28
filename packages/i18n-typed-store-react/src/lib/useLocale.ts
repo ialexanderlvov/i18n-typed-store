@@ -1,25 +1,26 @@
 import { useSyncExternalStore } from 'react';
+import type { LocaleChangeResult, LocaleLoadOptions } from 'i18n-typed-store';
 import { useI18nTypedStoreContext } from './useI18nTypedStoreContext';
 
 /**
  * Hook for accessing and managing the current locale.
  * Returns the current locale and a function to change it.
  * Supports SSR/SSG by using useSyncExternalStore for proper hydration.
- * Supports BCP 47 locale format (e.g., 'ru-RU', 'en-US', 'zh-Hans-CN').
- * If the exact locale is not available, finds the best matching locale.
+ * The type-safe setters accept configured locale keys. Explicit `FromTag`
+ * setters accept arbitrary BCP 47 locale tags and resolve their best match.
  *
  * @template N - Type of namespaces object
  * @template L - Type of locales object
  * @template M - Type of translation modules mapping
  *
- * @returns Object with current locale and setLocale function
+ * @returns Current locale plus typed-key and explicit BCP 47 tag setters
  *
  * @example
  * ```tsx
  * function LocaleSwitcher() {
- *   const { locale, setLocale } = useI18nLocale();
+ *   const { locale, setLocaleFromTag } = useI18nLocale();
  *   return (
- *     <select value={locale} onChange={(e) => setLocale(e.target.value)}>
+ *     <select value={String(locale)} onChange={(e) => setLocaleFromTag(e.target.value)}>
  *       <option value="en">English</option>
  *       <option value="ru">Русский</option>
  *       <option value="ru-RU">Русский (Россия)</option>
@@ -51,5 +52,21 @@ export const useI18nLocale = <N extends Record<string, string>, L extends Record
 		store.changeLocale(locale);
 	};
 
-	return { locale, setLocale: updateLocale };
+	const updateLocaleFromTag = (locale: string) => {
+		store.changeLocale(locale);
+	};
+
+	const updateLocaleAsync = (locale: keyof L, options?: LocaleLoadOptions<N>): Promise<LocaleChangeResult<L>> =>
+		store.changeLocaleAsync(locale, options);
+
+	const updateLocaleFromTagAsync = (locale: string, options?: LocaleLoadOptions<N>): Promise<LocaleChangeResult<L>> =>
+		store.changeLocaleAsync(locale, options);
+
+	return {
+		locale,
+		setLocale: updateLocale,
+		setLocaleFromTag: updateLocaleFromTag,
+		setLocaleAsync: updateLocaleAsync,
+		setLocaleFromTagAsync: updateLocaleFromTagAsync,
+	};
 };

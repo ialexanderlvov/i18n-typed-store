@@ -119,6 +119,55 @@ describe('useI18nTranslation', () => {
 		});
 	});
 
+	it('should bypass an existing cache on the initial subscription when fromCache is false', async () => {
+		let version = 0;
+		const loadModule = vi.fn(async () => ({ greeting: `Hello ${++version}` }));
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+
+		const { result } = renderHook(() => useI18nTranslation('common', false), {
+			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
+		});
+
+		await waitFor(() => {
+			expect(result.current?.greeting).toBe('Hello 2');
+		});
+		expect(loadModule).toHaveBeenCalledTimes(2);
+	});
+
+	it('should rerender after an external namespace reload', async () => {
+		let version = 0;
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async () => ({ greeting: `Hello ${++version}` }),
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+
+		const { result } = renderHook(() => useI18nTranslation('common'), {
+			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
+		});
+		expect(result.current?.greeting).toBe('Hello 1');
+
+		await act(async () => {
+			await store.translations.common.load('en', false);
+		});
+
+		await waitFor(() => {
+			expect(result.current?.greeting).toBe('Hello 2');
+		});
+	});
+
 	it('should work with different namespaces', async () => {
 		const store = createTestStore();
 
@@ -142,6 +191,15 @@ describe('useI18nTranslation', () => {
 	it('should cleanup listener on unmount', () => {
 		const store = createTestStore();
 		const removeListenerSpy = vi.spyOn(store, 'removeChangeLocaleListener');
+		const unsubscribeTranslationState = vi.fn();
+		const subscribeTranslationState = store.subscribeTranslationState;
+		vi.spyOn(store, 'subscribeTranslationState').mockImplementation((listener) => {
+			const unsubscribe = subscribeTranslationState(listener);
+			return () => {
+				unsubscribeTranslationState();
+				unsubscribe();
+			};
+		});
 
 		const { unmount } = renderHook(() => useI18nTranslation('common'), {
 			wrapper: ({ children }) => <I18nTypedStoreProvider store={store}>{children}</I18nTypedStoreProvider>,
@@ -150,6 +208,7 @@ describe('useI18nTranslation', () => {
 		unmount();
 
 		expect(removeListenerSpy).toHaveBeenCalled();
+		expect(unsubscribeTranslationState).toHaveBeenCalled();
 	});
 
 	it('should update when suspenseMode changes', async () => {

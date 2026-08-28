@@ -1,14 +1,6 @@
 import type { FC, ReactNode } from 'react';
-
-/**
- * Returns true when the caught value is a thenable (Promise-like).
- * React Suspense signals by throwing thenables, which must not be treated
- * as errors.
- */
-const isThenable = (value: unknown): value is PromiseLike<unknown> =>
-	value !== null &&
-	(typeof value === 'object' || typeof value === 'function') &&
-	typeof (value as { then?: unknown }).then === 'function';
+import { isThenable } from './isThenable';
+import { SafeErrorFallback } from './SafeErrorFallback';
 
 /**
  * Safe component that catches errors during string extraction from translation objects.
@@ -47,7 +39,6 @@ export const Safe: FC<{ children: () => string; errorComponent?: ReactNode; erro
 		if (isThenable(error)) {
 			throw error;
 		}
-		errorHandler?.(error);
-		return errorComponent ?? '';
+		return <SafeErrorFallback error={error} errorComponent={errorComponent} errorHandler={errorHandler} />;
 	}
 };

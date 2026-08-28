@@ -1,6 +1,12 @@
-import { createContext, useMemo, type ReactNode } from 'react';
-import { II18nTypedStoreContext } from '../types/context';
+import { createContext, useEffect, useMemo, type ReactNode } from 'react';
+import { II18nTypedStoreContext, type ShouldThrowLoadError } from '../types/context';
 import { TranslationStore } from 'i18n-typed-store';
+import {
+	getOrCreateSuspenseLoadOwner,
+	mountSuspenseLoadOwner,
+	releaseSuspenseLoadOwner,
+	suspenseLoadOwnerKey,
+} from './suspenseLoadRecords';
 
 /**
  * React context for I18n typed store.
@@ -20,6 +26,7 @@ export const I18nTypedStoreContext = createContext<II18nTypedStoreContext<any, a
  * @param props.store - Translation store instance
  * @param props.children - React children
  * @param props.suspenseMode - Suspense mode: 'once' | 'first-load-locale' | 'change-locale'
+ * @param props.shouldThrowLoadError - Optional policy for surfacing lazy-load failures through an Error Boundary
  * @returns Provider component
  *
  * @example
@@ -43,15 +50,35 @@ export const I18nTypedStoreProvider = <
 	store,
 	children,
 	suspenseMode = 'first-load-locale',
+	shouldThrowLoadError,
 }: {
 	store: TranslationStore<N, L, M>;
 	children: ReactNode;
 	suspenseMode?: II18nTypedStoreContext<N, L, M>['suspenseMode'];
+	shouldThrowLoadError?: ShouldThrowLoadError<N, L>;
 }) => {
+	const suspenseLoadOwner = useMemo(() => getOrCreateSuspenseLoadOwner(store), [store]);
+
+	useEffect(() => {
+		mountSuspenseLoadOwner(store, suspenseLoadOwner);
+		return () => {
+			releaseSuspenseLoadOwner(suspenseLoadOwner);
+		};
+	}, [store, suspenseLoadOwner]);
+
 	// Memoise the context value so it keeps a stable identity across renders.
 	// A fresh `{ store, suspenseMode }` object on every render would otherwise
 	// re-trigger every context consumer in the tree on each parent re-render.
-	const value = useMemo(() => ({ store, suspenseMode }) as II18nTypedStoreContext<N, L, M>, [store, suspenseMode]);
+	const value = useMemo(
+		() =>
+			({
+				store,
+				suspenseMode,
+				shouldThrowLoadError,
+				[suspenseLoadOwnerKey]: suspenseLoadOwner,
+			}) as II18nTypedStoreContext<N, L, M>,
+		[store, suspenseMode, shouldThrowLoadError, suspenseLoadOwner],
+	);
 
 	return <I18nTypedStoreContext.Provider value={value}>{children}</I18nTypedStoreContext.Provider>;
 };

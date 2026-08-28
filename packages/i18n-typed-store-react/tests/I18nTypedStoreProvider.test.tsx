@@ -36,8 +36,8 @@ describe('I18nTypedStoreProvider', () => {
 		const store = createTestStore();
 
 		const TestComponent = () => {
-			const { store: contextStore } = useI18nTypedStoreContext();
-			return <div>{contextStore === store ? 'Store matches' : 'Store mismatch'}</div>;
+			const { store: contextStore } = useI18nTypedStoreContext<typeof namespaces, typeof locales, { common: { greeting: string } }>();
+			return <div>{Object.is(contextStore, store) ? 'Store matches' : 'Store mismatch'}</div>;
 		};
 
 		render(
@@ -81,6 +81,28 @@ describe('I18nTypedStoreProvider', () => {
 		);
 
 		expect(screen.getByText('change-locale')).toBeInTheDocument();
+	});
+
+	it('should provide the load-error policy through context', () => {
+		const store = createTestStore();
+		const policy = () => true;
+
+		const TestComponent = () => {
+			const { shouldThrowLoadError } = useI18nTypedStoreContext<
+				typeof namespaces,
+				typeof locales,
+				{ common: { greeting: string } }
+			>();
+			return <div>{shouldThrowLoadError === policy ? 'Policy matches' : 'Policy mismatch'}</div>;
+		};
+
+		render(
+			<I18nTypedStoreProvider store={store} shouldThrowLoadError={policy}>
+				<TestComponent />
+			</I18nTypedStoreProvider>,
+		);
+
+		expect(screen.getByText('Policy matches')).toBeInTheDocument();
 	});
 
 	it('should support all suspenseMode variants', () => {

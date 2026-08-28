@@ -1,10 +1,10 @@
 import { defineConfig } from 'tsup';
 import { readFile, writeFile } from 'node:fs/promises';
 
-// Every export of the main entry is a client-only React construct (Context,
+// The main entry contains client-only React constructs (Context, components,
 // hooks). Without a "use client" directive the bundle crashes in the Next.js
 // App Router / React Server Components, where modules are server components
-// by default.
+// by default. SSR helpers are isolated in the dedicated `server` entry.
 //
 // A tsup/esbuild `banner` does NOT work here: esbuild treats a top-level
 // "use client" string as a module directive and strips it when bundling

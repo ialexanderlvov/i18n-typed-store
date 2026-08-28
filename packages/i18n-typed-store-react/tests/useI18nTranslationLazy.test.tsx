@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, renderHook, act, waitFor, screen } from '@testing-library/react';
 import { StrictMode, Suspense, Component, type ReactNode } from 'react';
-import { I18nTypedStoreProvider, useI18nTranslationLazy } from '../src/index';
+import { I18nTypedStoreProvider, useI18nTranslationLazy, useI18nTranslationState } from '../src/index';
 import { createTranslationStore } from 'i18n-typed-store';
 
 class ErrorBoundary extends Component<{ children: ReactNode; onError?: (error: unknown) => void }, { hasError: boolean }> {
@@ -74,6 +74,54 @@ describe('useI18nTranslationLazy', () => {
 			},
 			{ timeout: 1000 },
 		);
+	});
+
+	it('should defer cold Suspense loads until after render when a state observer is already mounted', async () => {
+		const loadModule = vi.fn(async () => ({ greeting: 'Hello' }));
+		const store = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales: { en: 'en' } as const,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		}).type<{ common: { greeting: string } }>();
+
+		const Observer = () => {
+			const state = useI18nTranslationState('common');
+			return <div data-testid="observer-loading">{String(state.isLoading)}</div>;
+		};
+		const LazyConsumer = () => {
+			const translation = useI18nTranslationLazy('common');
+			return <div data-testid="deferred-translation">{translation.greeting}</div>;
+		};
+		const App = ({ showLazy }: { showLazy: boolean }) => (
+			<I18nTypedStoreProvider store={store} suspenseMode="first-load-locale">
+				<Observer />
+				{showLazy ? (
+					<Suspense fallback={<div data-testid="deferred-fallback">Loading...</div>}>
+						<LazyConsumer />
+					</Suspense>
+				) : null}
+			</I18nTypedStoreProvider>
+		);
+
+		const { rerender } = render(<App showLazy={false} />);
+		expect(screen.getByTestId('observer-loading')).toHaveTextContent('false');
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		try {
+			rerender(<App showLazy />);
+			expect(screen.getByTestId('deferred-fallback')).toBeInTheDocument();
+
+			await waitFor(() => {
+				expect(screen.getByTestId('deferred-translation')).toHaveTextContent('Hello');
+			});
+			expect(loadModule).toHaveBeenCalledOnce();
+			const consoleOutput = consoleErrorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+			expect(consoleOutput).not.toMatch(/Cannot update a component[\s\S]*while rendering a different component/);
+		} finally {
+			consoleErrorSpy.mockRestore();
+		}
 	});
 
 	it('should return translation after loading', async () => {
@@ -151,7 +199,7 @@ describe('useI18nTranslationLazy', () => {
 			await store.translations.common.load('en');
 		});
 
-		const { result, rerender } = renderHook(() => useI18nTranslationLazy('common'), {
+		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
 			wrapper: ({ children }) => (
 				<I18nTypedStoreProvider store={store} suspenseMode="change-locale">
 					{children}
@@ -261,12 +309,265 @@ describe('useI18nTranslationLazy', () => {
 		expect(loadModule.mock.calls.length).toBe(callCount); // Should not be called again
 	});
 
+	it('should bypass an existing cache on the initial subscription when fromCache is false', async () => {
+		let version = 0;
+		const loadModule = vi.fn(async () => ({ greeting: `Hello ${++version}` }));
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+
+		const { result } = renderHook(() => useI18nTranslationLazy('common', false), {
+			wrapper: ({ children }) => (
+				<I18nTypedStoreProvider store={store} suspenseMode="once">
+					{children}
+				</I18nTypedStoreProvider>
+			),
+		});
+
+		await waitFor(() => {
+			expect(result.current.greeting).toBe('Hello 2');
+		});
+		expect(loadModule).toHaveBeenCalledTimes(2);
+	});
+
+	it('should not duplicate a cold initial load when fromCache is false', async () => {
+		const loadModule = vi.fn(async () => ({ greeting: 'Hello' }));
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common', false);
+			return <div data-testid="cold-load-content">{translation.greeting}</div>;
+		};
+		render(
+			<StrictMode>
+				<I18nTypedStoreProvider store={store} suspenseMode="first-load-locale">
+					<Suspense fallback={<div>Loading...</div>}>
+						<Consumer />
+					</Suspense>
+				</I18nTypedStoreProvider>
+			</StrictMode>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('cold-load-content')).toHaveTextContent('Hello');
+		});
+		expect(loadModule).toHaveBeenCalledTimes(1);
+	});
+
+	it('should preserve a cold-load marker when Suspense is outside the Provider', async () => {
+		let revision = 0;
+		const loadModule = vi.fn(async () => ({ greeting: `Hello ${String(++revision)}` }));
+		const store = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		}).type<{ common: { greeting: string } }>();
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common', false);
+			return <div data-testid="outer-suspense-content">{translation.greeting}</div>;
+		};
+		const App = () => (
+			<I18nTypedStoreProvider store={store}>
+				<Consumer />
+			</I18nTypedStoreProvider>
+		);
+
+		render(
+			<Suspense fallback={<div>Loading outside Provider...</div>}>
+				<App />
+			</Suspense>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('outer-suspense-content')).toHaveTextContent('Hello 1');
+		});
+		expect(loadModule).toHaveBeenCalledOnce();
+	});
+
+	it('should coalesce an immediate remount with a completed abandoned outer-Suspense request', async () => {
+		let resolveFirstLoad!: (translation: { greeting: string }) => void;
+		const firstLoad = new Promise<{ greeting: string }>((resolve) => {
+			resolveFirstLoad = resolve;
+		});
+		let revision = 1;
+		const loadModule = vi.fn(() => (revision === 1 ? firstLoad : Promise.resolve({ greeting: `Hello ${String(revision)}` })));
+		const store = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		}).type<{ common: { greeting: string } }>();
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common', false);
+			return <div data-testid="abandoned-outer-content">{translation.greeting}</div>;
+		};
+
+		const abandonedRender = render(
+			<Suspense fallback={<div data-testid="abandoned-outer-fallback">Loading...</div>}>
+				<I18nTypedStoreProvider store={store}>
+					<Consumer />
+				</I18nTypedStoreProvider>
+			</Suspense>,
+		);
+		expect(screen.getByTestId('abandoned-outer-fallback')).toBeInTheDocument();
+		await waitFor(() => {
+			expect(loadModule).toHaveBeenCalledOnce();
+		});
+		const pendingStoreLoad = store.translations.common.translations.en.loadingPromise;
+		expect(pendingStoreLoad).toBeDefined();
+
+		abandonedRender.unmount();
+		await act(async () => {
+			resolveFirstLoad({ greeting: 'Hello 1' });
+			await pendingStoreLoad;
+			await Promise.resolve();
+		});
+		revision = 2;
+
+		render(
+			<I18nTypedStoreProvider store={store} suspenseMode="once">
+				<Consumer />
+			</I18nTypedStoreProvider>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('abandoned-outer-content')).toHaveTextContent('Hello 1');
+		});
+		expect(loadModule).toHaveBeenCalledOnce();
+	});
+
+	it('should not let an abandoned Suspense render suppress a later forced mount', async () => {
+		let resolveFirstLoad!: (translation: { greeting: string }) => void;
+		const firstLoad = new Promise<{ greeting: string }>((resolve) => {
+			resolveFirstLoad = resolve;
+		});
+		let revision = 1;
+		const loadModule = vi.fn(() => (revision === 1 ? firstLoad : Promise.resolve({ greeting: `Hello ${String(revision)}` })));
+		const store = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		}).type<{ common: { greeting: string } }>();
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common', false);
+			return <div data-testid="abandoned-suspense-content">{translation.greeting}</div>;
+		};
+
+		const abandonedRender = render(
+			<I18nTypedStoreProvider store={store}>
+				<Suspense fallback={<div data-testid="abandoned-suspense-fallback">Loading...</div>}>
+					<Consumer />
+				</Suspense>
+			</I18nTypedStoreProvider>,
+		);
+		expect(screen.getByTestId('abandoned-suspense-fallback')).toBeInTheDocument();
+
+		abandonedRender.unmount();
+		await act(async () => {
+			await Promise.resolve();
+			resolveFirstLoad({ greeting: 'Hello 1' });
+			await firstLoad;
+		});
+		revision = 2;
+
+		render(
+			<I18nTypedStoreProvider store={store} suspenseMode="once">
+				<Consumer />
+			</I18nTypedStoreProvider>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('abandoned-suspense-content')).toHaveTextContent('Hello 2');
+		});
+		expect(loadModule).toHaveBeenCalledTimes(2);
+	});
+
+	it('should preserve another Provider claim when one shared-store Provider unmounts', async () => {
+		let resolveSharedLoad!: (translation: { greeting: string }) => void;
+		const sharedLoad = new Promise<{ greeting: string }>((resolve) => {
+			resolveSharedLoad = resolve;
+		});
+		const loadModule = vi
+			.fn<() => Promise<{ greeting: string }>>()
+			.mockImplementationOnce(() => sharedLoad)
+			.mockResolvedValue({ greeting: 'Unexpected refresh' });
+		const store = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule,
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		}).type<{ common: { greeting: string } }>();
+		const FirstConsumer = () => <div data-testid="shared-provider-content">{useI18nTranslationLazy('common', false).greeting}</div>;
+		const SecondConsumer = () => <div>{useI18nTranslationLazy('common', false).greeting}</div>;
+
+		render(
+			<I18nTypedStoreProvider store={store}>
+				<Suspense fallback={<div>First loading...</div>}>
+					<FirstConsumer />
+				</Suspense>
+			</I18nTypedStoreProvider>,
+		);
+		const secondProvider = render(
+			<I18nTypedStoreProvider store={store}>
+				<Suspense fallback={<div>Second loading...</div>}>
+					<SecondConsumer />
+				</Suspense>
+			</I18nTypedStoreProvider>,
+		);
+		await waitFor(() => {
+			expect(loadModule).toHaveBeenCalledOnce();
+		});
+
+		secondProvider.unmount();
+		await act(async () => {
+			await Promise.resolve();
+			resolveSharedLoad({ greeting: 'Shared result' });
+			await sharedLoad;
+		});
+
+		await waitFor(() => {
+			expect(screen.getByTestId('shared-provider-content')).toHaveTextContent('Shared result');
+		});
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(loadModule).toHaveBeenCalledOnce();
+	});
+
 	it('should cleanup listener on unmount', async () => {
 		const store = createTestStore();
 		await act(async () => {
 			await store.translations.common.load('en');
 		});
 		const removeListenerSpy = vi.spyOn(store, 'removeChangeLocaleListener');
+		const unsubscribeTranslationState = vi.fn();
+		const subscribeTranslationState = store.subscribeTranslationState;
+		vi.spyOn(store, 'subscribeTranslationState').mockImplementation((listener) => {
+			const unsubscribe = subscribeTranslationState(listener);
+			return () => {
+				unsubscribeTranslationState();
+				unsubscribe();
+			};
+		});
 
 		const { unmount } = renderHook(() => useI18nTranslationLazy('common'), {
 			wrapper: ({ children }) => (
@@ -288,6 +589,7 @@ describe('useI18nTranslationLazy', () => {
 
 		// Listener should be removed on unmount
 		expect(removeListenerSpy.mock.calls.length).toBeGreaterThan(0);
+		expect(unsubscribeTranslationState.mock.calls.length).toBeGreaterThan(0);
 	});
 
 	it('should handle suspenseMode="first-load-locale"', async () => {
@@ -355,7 +657,7 @@ describe('useI18nTranslationLazy', () => {
 
 		const store = storeFactory.type<{ common: { greeting: string } }>();
 
-		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
+		renderHook(() => useI18nTranslationLazy('common'), {
 			wrapper: ({ children }) => (
 				<I18nTypedStoreProvider store={store} suspenseMode="once">
 					<Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
@@ -389,7 +691,7 @@ describe('useI18nTranslationLazy', () => {
 		// Verify translation is not loaded initially
 		expect(store.translations.common.translations.en.namespace).toBeUndefined();
 
-		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
+		renderHook(() => useI18nTranslationLazy('common'), {
 			wrapper: ({ children }) => (
 				<I18nTypedStoreProvider store={store} suspenseMode="once">
 					{children}
@@ -485,6 +787,358 @@ describe('useI18nTranslationLazy', () => {
 
 		process.removeListener('unhandledRejection', rejectionHandler);
 		previousRejectionListeners.forEach((listener) => process.on('unhandledRejection', listener as any));
+	});
+
+	it('should throw the exact externally recorded error when the provider policy selects it', async () => {
+		const loadError = new Error('Selected external failure');
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async (locale) => {
+				if (locale === 'ru') throw loadError;
+				return { greeting: 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		store.changeLocale('ru');
+		await expect(store.translations.common.load('ru', false)).rejects.toBe(loadError);
+
+		const caughtErrors: unknown[] = [];
+		const policy = vi.fn(() => true);
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common');
+			return <div>{translation.greeting}</div>;
+		};
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(
+			<I18nTypedStoreProvider store={store} suspenseMode="once" shouldThrowLoadError={policy}>
+				<ErrorBoundary onError={(error) => caughtErrors.push(error)}>
+					<Consumer />
+				</ErrorBoundary>
+			</I18nTypedStoreProvider>,
+		);
+
+		await waitFor(() => {
+			expect(caughtErrors).toContain(loadError);
+		});
+		expect(policy).toHaveBeenCalledWith({
+			error: loadError,
+			namespace: 'common',
+			locale: 'ru',
+			hasPreviousTranslation: true,
+			hasActiveTranslation: false,
+		});
+		consoleErrorSpy.mockRestore();
+	});
+
+	it('should preserve a previous translation when the provider policy declines the error', async () => {
+		const loadError = new Error('Recoverable failure');
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async (locale) => {
+				if (locale === 'ru') throw loadError;
+				return { greeting: 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		store.changeLocale('ru');
+		await expect(store.translations.common.load('ru', false)).rejects.toBe(loadError);
+		const policy = vi.fn(() => false);
+
+		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
+			wrapper: ({ children }) => (
+				<I18nTypedStoreProvider store={store} suspenseMode="once" shouldThrowLoadError={policy}>
+					{children}
+				</I18nTypedStoreProvider>
+			),
+		});
+
+		expect(result.current.greeting).toBe('Hello');
+		expect(policy).toHaveBeenCalledWith(
+			expect.objectContaining({ error: loadError, hasPreviousTranslation: true, hasActiveTranslation: false }),
+		);
+	});
+
+	it('should apply the policy to a failed forced refresh even while active cached data exists', async () => {
+		const loadError = new Error('Cached refresh failure');
+		let shouldFail = false;
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async () => {
+				if (shouldFail) throw loadError;
+				return { greeting: 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		shouldFail = true;
+
+		const caughtErrors: unknown[] = [];
+		const policy = vi.fn(({ hasActiveTranslation }: { hasActiveTranslation: boolean }) => hasActiveTranslation);
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common', false);
+			return <div>{translation.greeting}</div>;
+		};
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(
+			<I18nTypedStoreProvider store={store} suspenseMode="once" shouldThrowLoadError={policy}>
+				<ErrorBoundary onError={(error) => caughtErrors.push(error)}>
+					<Consumer />
+				</ErrorBoundary>
+			</I18nTypedStoreProvider>,
+		);
+
+		await waitFor(() => {
+			expect(caughtErrors).toContain(loadError);
+		});
+		expect(policy).toHaveBeenCalledWith(
+			expect.objectContaining({
+				error: loadError,
+				hasPreviousTranslation: true,
+				hasActiveTranslation: true,
+			}),
+		);
+		consoleErrorSpy.mockRestore();
+	});
+
+	it('should keep active cached data when the provider policy declines a forced-refresh error', async () => {
+		const loadError = new Error('Recoverable cached refresh failure');
+		let shouldFail = false;
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async () => {
+				if (shouldFail) throw loadError;
+				return { greeting: 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		shouldFail = true;
+		await expect(store.translations.common.load('en', false)).rejects.toBe(loadError);
+		const policy = vi.fn(() => false);
+
+		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
+			wrapper: ({ children }) => (
+				<I18nTypedStoreProvider store={store} shouldThrowLoadError={policy}>
+					{children}
+				</I18nTypedStoreProvider>
+			),
+		});
+
+		expect(result.current.greeting).toBe('Hello');
+		expect(policy).toHaveBeenCalledWith(
+			expect.objectContaining({ error: loadError, hasPreviousTranslation: true, hasActiveTranslation: true }),
+		);
+	});
+
+	it('should keep the lazy snapshot stable when the provider policy receives NaN', async () => {
+		let shouldFail = false;
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async () => {
+				if (shouldFail) return Promise.reject(NaN);
+				return { greeting: 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		shouldFail = true;
+		await store.translations.common.load('en', false).catch((error: unknown) => {
+			expect(error).toBeNaN();
+		});
+		const policy = vi.fn((_context: { error: unknown }) => false);
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		try {
+			const { result, rerender } = renderHook(() => useI18nTranslationLazy('common'), {
+				wrapper: ({ children }) => (
+					<I18nTypedStoreProvider store={store} shouldThrowLoadError={policy}>
+						{children}
+					</I18nTypedStoreProvider>
+				),
+			});
+			const initialTranslation = result.current;
+
+			expect(initialTranslation.greeting).toBe('Hello');
+			expect(policy).toHaveBeenCalled();
+			expect(policy.mock.calls[0]?.[0].error).toBeNaN();
+			rerender();
+			expect(result.current).toBe(initialTranslation);
+
+			const consoleOutput = consoleErrorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+			expect(consoleOutput).not.toContain('The result of getSnapshot should be cached');
+			expect(consoleOutput).not.toContain('Maximum update depth exceeded');
+		} finally {
+			consoleErrorSpy.mockRestore();
+		}
+	});
+
+	it('should use isError to surface reject(undefined) as a diagnostic Error', async () => {
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async () => Promise.reject(undefined),
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en').catch(() => undefined);
+		expect(store.translations.common.translations.en.isError).toBe(true);
+		expect(store.translations.common.translations.en.error).toBeUndefined();
+
+		const caughtErrors: unknown[] = [];
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common');
+			return <div>{translation.greeting}</div>;
+		};
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(
+			<I18nTypedStoreProvider store={store} shouldThrowLoadError={false}>
+				<ErrorBoundary onError={(error) => caughtErrors.push(error)}>
+					<Consumer />
+				</ErrorBoundary>
+			</I18nTypedStoreProvider>,
+		);
+
+		await waitFor(() => {
+			expect(caughtErrors).toHaveLength(1);
+		});
+		expect(caughtErrors[0]).toBeInstanceOf(Error);
+		expect((caughtErrors[0] as Error).message).toContain('namespace "common" and locale "en"');
+		consoleErrorSpy.mockRestore();
+	});
+
+	it('should wrap a thenable rejection so React does not mistake it for Suspense', async () => {
+		const thenableReason = Promise.resolve('loader rejection reason');
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async () => Promise.reject(thenableReason),
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en').catch(() => undefined);
+		expect(store.translations.common.translations.en.error).toBe(thenableReason);
+
+		const caughtErrors: unknown[] = [];
+		const Consumer = () => {
+			const translation = useI18nTranslationLazy('common');
+			return <div>{translation.greeting}</div>;
+		};
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(
+			<I18nTypedStoreProvider store={store} shouldThrowLoadError={false}>
+				<ErrorBoundary onError={(error) => caughtErrors.push(error)}>
+					<Suspense fallback={<div>Loading</div>}>
+						<Consumer />
+					</Suspense>
+				</ErrorBoundary>
+			</I18nTypedStoreProvider>,
+		);
+
+		await waitFor(() => {
+			expect(caughtErrors).toHaveLength(1);
+		});
+		expect(caughtErrors[0]).toBeInstanceOf(Error);
+		expect((caughtErrors[0] as Error & { cause?: unknown }).cause).toBe(thenableReason);
+		consoleErrorSpy.mockRestore();
+	});
+
+	it('should rerender after an external retry succeeds', async () => {
+		const loadError = new Error('Temporary failure');
+		let failRussian = true;
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales,
+			loadModule: async (locale) => {
+				if (locale === 'ru' && failRussian) throw loadError;
+				return { greeting: locale === 'ru' ? 'Привет' : 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
+			wrapper: ({ children }) => (
+				<I18nTypedStoreProvider store={store} suspenseMode="once">
+					{children}
+				</I18nTypedStoreProvider>
+			),
+		});
+
+		act(() => {
+			store.changeLocale('ru');
+		});
+		await waitFor(() => {
+			expect(store.translations.common.translations.ru.isError).toBe(true);
+		});
+		expect(result.current.greeting).toBe('Hello');
+
+		failRussian = false;
+		await act(async () => {
+			await store.translations.common.load('ru', false);
+		});
+		await waitFor(() => {
+			expect(result.current.greeting).toBe('Привет');
+		});
+	});
+
+	it('should fall back to the last store-selected translation instead of a directly prefetched locale', async () => {
+		const extendedLocales = { en: 'en', ru: 'ru', de: 'de' } as const;
+		const storeFactory = createTranslationStore({
+			namespaces: { common: 'common' } as const,
+			locales: extendedLocales,
+			loadModule: async (locale) => {
+				if (locale === 'de') throw new Error('German translation is unavailable');
+				return { greeting: locale === 'ru' ? 'Привет' : 'Hello' };
+			},
+			extractTranslation: (module: { greeting: string }) => module,
+			defaultLocale: 'en',
+		});
+		const store = storeFactory.type<{ common: { greeting: string } }>();
+		await store.translations.common.load('en');
+		await store.translations.common.load('ru');
+		expect(store.translations.common.currentTranslation?.greeting).toBe('Hello');
+		expect(store.translations.common.currentLocale).toBe('en');
+
+		const { result } = renderHook(() => useI18nTranslationLazy('common'), {
+			wrapper: ({ children }) => (
+				<I18nTypedStoreProvider store={store} suspenseMode="once">
+					{children}
+				</I18nTypedStoreProvider>
+			),
+		});
+		expect(result.current.greeting).toBe('Hello');
+
+		act(() => {
+			store.changeLocale('de');
+		});
+		await waitFor(() => {
+			expect(store.translations.common.translations.de.isError).toBe(true);
+		});
+		expect(result.current.greeting).toBe('Hello');
 	});
 
 	it('should not leak locale listeners under StrictMode double mounting', async () => {

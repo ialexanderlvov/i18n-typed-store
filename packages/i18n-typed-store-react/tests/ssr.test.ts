@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getLocaleFromRequest, initializeStore, RequestContext } from '../src/index';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { getLocaleFromRequest, initializeStore, parseAcceptLanguage } from '../src/server';
+import type { RequestContext } from '../src/server';
 import { createTranslationStore } from 'i18n-typed-store';
 
 describe('getLocaleFromRequest', () => {
@@ -8,10 +9,47 @@ describe('getLocaleFromRequest', () => {
 	const defaultOptions = {
 		defaultLocale: 'en',
 		availableLocales,
-	};
+	} as const;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe('type inference', () => {
+		it('should infer the exact locale union from a readonly tuple', () => {
+			const typedAvailableLocales = ['en', 'ru', 'de-DE'] as const;
+			const locale = getLocaleFromRequest(
+				{},
+				{
+					availableLocales: typedAvailableLocales,
+					defaultLocale: 'en',
+				},
+			);
+
+			expectTypeOf(locale).toEqualTypeOf<'en' | 'ru' | 'de-DE'>();
+			expect(locale).toBe('en');
+		});
+
+		it('should reject a default locale outside the available tuple', () => {
+			const typedAvailableLocales = ['en', 'ru'] as const;
+			const invalidOptions = {
+				availableLocales: typedAvailableLocales,
+				defaultLocale: 'de',
+			} as const;
+
+			// @ts-expect-error defaultLocale must be one of availableLocales
+			getLocaleFromRequest({}, invalidOptions);
+		});
+
+		it('should preserve the explicit locale-map generic overload', () => {
+			const locale = getLocaleFromRequest<typeof locales>({}, defaultOptions);
+			const broadlyTypedLocale = getLocaleFromRequest<Record<string, string>>({}, defaultOptions);
+
+			expectTypeOf(locale).toEqualTypeOf<keyof typeof locales>();
+			expectTypeOf(broadlyTypedLocale).toEqualTypeOf<string>();
+			expect(locale).toBe('en');
+			expect(broadlyTypedLocale).toBe('en');
+		});
 	});
 
 	describe('query parameter detection', () => {
@@ -90,6 +128,19 @@ describe('getLocaleFromRequest', () => {
 
 			expect(locale).toBe('en');
 		});
+
+		it('should accept an explicitly undefined query value', () => {
+			const context: RequestContext = {
+				query: { locale: undefined },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				queryParamName: 'locale',
+			});
+
+			expect(locale).toBe('en');
+		});
 	});
 
 	describe('cookie detection', () => {
@@ -147,6 +198,19 @@ describe('getLocaleFromRequest', () => {
 
 		it('should return default locale if cookies is undefined', () => {
 			const context: RequestContext = {};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				cookieName: 'locale',
+			});
+
+			expect(locale).toBe('en');
+		});
+
+		it('should accept an explicitly undefined cookie value', () => {
+			const context: RequestContext = {
+				cookies: { locale: undefined },
+			};
 
 			const locale = getLocaleFromRequest(context, {
 				...defaultOptions,
@@ -244,6 +308,34 @@ describe('getLocaleFromRequest', () => {
 			expect(locale).toBe('ru');
 		});
 
+		it('should find a plain-object header case-insensitively', () => {
+			const context: RequestContext = {
+				headers: { 'X-Locale': 'ru' },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				headerName: 'x-locale',
+				parseAcceptLanguage: false,
+			});
+
+			expect(locale).toBe('ru');
+		});
+
+		it('should accept an explicitly undefined plain-object header value', () => {
+			const context: RequestContext = {
+				headers: { 'x-locale': undefined },
+			};
+
+			const locale = getLocaleFromRequest(context, {
+				...defaultOptions,
+				headerName: 'x-locale',
+				parseAcceptLanguage: false,
+			});
+
+			expect(locale).toBe('en');
+		});
+
 		it('should return default locale if headers is undefined', () => {
 			const context: RequestContext = {};
 
@@ -258,6 +350,26 @@ describe('getLocaleFromRequest', () => {
 	});
 
 	describe('Accept-Language header parsing', () => {
+		it('should find an Accept-Language plain-object header case-insensitively', () => {
+			const context: RequestContext = {
+				headers: { 'Accept-Language': 'ru,en;q=0.9' },
+			};
+
+			const locale = getLocaleFromRequest(context, defaultOptions);
+
+			expect(locale).toBe('ru');
+		});
+
+		it('should combine multiple Accept-Language field lines', () => {
+			const context: RequestContext = {
+				headers: { 'accept-language': ['fr;q=0.1', 'ru;q=1'] },
+			};
+
+			const locale = getLocaleFromRequest(context, defaultOptions);
+
+			expect(locale).toBe('ru');
+		});
+
 		it('should parse Accept-Language header and return exact match', () => {
 			const context: RequestContext = {
 				headers: { 'accept-language': 'ru,en;q=0.9' },
@@ -434,8 +546,7 @@ describe('getLocaleFromRequest', () => {
 			expect(locale).toBe('en-US');
 		});
 
-		it('should survive a malformed q= value and treat it as q=1', () => {
-			// parseFloat('garbage') is NaN; NaN used to poison the quality sort.
+		it('should ignore a language range with a malformed q value', () => {
 			const context: RequestContext = {
 				headers: { 'accept-language': 'ru;q=garbage,en;q=0.5' },
 			};
@@ -446,8 +557,7 @@ describe('getLocaleFromRequest', () => {
 				parseAcceptLanguage: true,
 			});
 
-			// 'ru' gets the default quality of 1 and wins over en;q=0.5.
-			expect(locale).toBe('ru');
+			expect(locale).toBe('en');
 		});
 
 		it('should ignore languages explicitly rejected with q=0', () => {
@@ -659,6 +769,112 @@ describe('getLocaleFromRequest', () => {
 	});
 });
 
+describe('parseAcceptLanguage', () => {
+	it('should reject a default locale outside the available tuple', () => {
+		const availableLocales = ['en', 'ru'] as const;
+
+		// @ts-expect-error -- defaultLocale must be one of availableLocales
+		parseAcceptLanguage(undefined, availableLocales, 'de');
+
+		expect(true).toBe(true);
+	});
+
+	it('should use a wildcard to select the first available locale', () => {
+		const availableLocales = ['de', 'en', 'ru'] as const;
+		const locale = parseAcceptLanguage('fr;q=0.9,*;q=0.8', availableLocales, 'en');
+
+		expectTypeOf(locale).toEqualTypeOf<'de' | 'en' | 'ru'>();
+		expect(locale).toBe('de');
+	});
+
+	it('should exclude a q=0 range from a wildcard match', () => {
+		const locale = parseAcceptLanguage('en;q=0,*;q=0.8', ['en', 'ru', 'de'] as const, 'en');
+
+		expect(locale).toBe('ru');
+	});
+
+	it('should not return the default locale when it is explicitly rejected', () => {
+		const locale = parseAcceptLanguage('fr;q=0.9,en;q=0', ['en', 'ru'] as const, 'en');
+
+		expect(locale).toBe('ru');
+	});
+
+	it('should allow a specific positive range to override a rejected wildcard', () => {
+		const locale = parseAcceptLanguage('en;q=1,*;q=0', ['ru', 'en'] as const, 'ru');
+
+		expect(locale).toBe('en');
+	});
+
+	it('should let a more specific range control quality over a wildcard', () => {
+		const locale = parseAcceptLanguage('*;q=1,en;q=0.5', ['en', 'ru'] as const, 'en');
+
+		expect(locale).toBe('ru');
+	});
+
+	it('should not bypass a direct q=0 exclusion through locale fallback', () => {
+		const locale = parseAcceptLanguage('en-US;q=1,en;q=0', ['en', 'ru'] as const, 'ru');
+
+		expect(locale).toBe('ru');
+	});
+
+	it('should let a specific q=0 range override a positive general range', () => {
+		const locale = parseAcceptLanguage('en;q=1,en-US;q=0', ['en-US', 'en-GB'] as const, 'en-US');
+
+		expect(locale).toBe('en-GB');
+	});
+
+	it('should let a specific positive range override a general q=0 range', () => {
+		const locale = parseAcceptLanguage('en;q=0,en-US;q=1', ['en-US', 'ru'] as const, 'ru');
+
+		expect(locale).toBe('en-US');
+	});
+
+	it('should use the effective quality of each available locale', () => {
+		const locale = parseAcceptLanguage('en;q=0.8,en-US;q=0.7', ['en-US', 'en-GB'] as const, 'en-US');
+
+		expect(locale).toBe('en-GB');
+	});
+
+	it('should prefer a positive locale fallback over a lower-quality wildcard', () => {
+		const locale = parseAcceptLanguage('en-US;q=1,*;q=0.5', ['en', 'ru'] as const, 'ru');
+
+		expect(locale).toBe('en');
+	});
+
+	it('should use the core matcher specificity for a locale fallback', () => {
+		const locale = parseAcceptLanguage('zh-Hans-SG', ['zh', 'zh-Hans-CN'] as const, 'zh');
+
+		expect(locale).toBe('zh-Hans-CN');
+	});
+
+	it('should preserve direct q=0 exclusions when choosing a specific fallback', () => {
+		const locale = parseAcceptLanguage('zh-Hans-SG;q=1,zh-Hans-CN;q=0,*;q=0.5', ['zh', 'zh-Hans-CN'] as const, 'zh');
+
+		expect(locale).toBe('zh');
+	});
+
+	it('should use quality to choose between equally specific locale fallbacks', () => {
+		const locale = parseAcceptLanguage('en-US;q=0.1,en-GB;q=0.9,*;q=0.5', ['en', 'ru'] as const, 'ru');
+
+		expect(locale).toBe('en');
+	});
+
+	it.each(['garbage', '1.1', '2', '-0.1', '.5', '0.1234', '1.0001'])(
+		'should ignore a range with malformed or out-of-range quality %s',
+		(quality) => {
+			const locale = parseAcceptLanguage(`ru;q=${quality},en;q=0.5`, ['ru', 'en'] as const, 'ru');
+
+			expect(locale).toBe('en');
+		},
+	);
+
+	it('should preserve header order for equally weighted ranges', () => {
+		const locale = parseAcceptLanguage('ru;q=0.8,en;q=0.8', ['en', 'ru'] as const, 'en');
+
+		expect(locale).toBe('ru');
+	});
+});
+
 describe('initializeStore', () => {
 	const namespaces = { common: 'common' } as const;
 	const locales = { en: 'en', ru: 'ru', de: 'de' } as const;
@@ -705,7 +921,7 @@ describe('initializeStore', () => {
 		store.addChangeLocaleListener(listener);
 		initializeStore(store, 'ru');
 
-		expect(listener).toHaveBeenCalledWith('ru');
+		expect(listener).toHaveBeenCalledWith('ru', { source: 'sync', loadedNamespaces: [] });
 		expect(listener).toHaveBeenCalledTimes(1);
 	});
 
@@ -718,7 +934,7 @@ describe('initializeStore', () => {
 		store.addChangeLocaleListener(listener2);
 		initializeStore(store, 'de');
 
-		expect(listener1).toHaveBeenCalledWith('de');
-		expect(listener2).toHaveBeenCalledWith('de');
+		expect(listener1).toHaveBeenCalledWith('de', { source: 'sync', loadedNamespaces: [] });
+		expect(listener2).toHaveBeenCalledWith('de', { source: 'sync', loadedNamespaces: [] });
 	});
 });

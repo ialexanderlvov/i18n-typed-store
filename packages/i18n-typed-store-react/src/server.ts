@@ -1,11 +1,11 @@
 /**
  * Server-side entry point (`i18n-typed-store-react/server`).
  *
- * The main entry point is bundled with a "use client" directive because every
- * export there is a client-only React construct (Context, hooks). That
- * directive makes it unusable inside React Server Components and
- * `getServerSideProps`. This entry exposes the SSR utilities WITHOUT the
- * directive so they can be imported from server code:
+ * The main entry point is bundled with a "use client" directive because it
+ * contains React context, hooks, and components. That directive makes the
+ * whole entry unsuitable for React Server Components and server-only modules.
+ * SSR utilities are exposed exclusively from this entry, without the
+ * directive:
  *
  * @example
  * ```ts

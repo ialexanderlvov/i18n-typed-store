@@ -43,56 +43,73 @@ export const useI18nTranslation = <
 	// and set it up again each render).
 	const [subscribe, getSnapshot] = useMemo(() => {
 		/**
-		 * The snapshot is the translation object for the *active* locale. It is a
-		 * plain property read, so its identity is stable between calls until a
-		 * load replaces the slot — exactly what useSyncExternalStore requires to
-		 * avoid infinite re-render loops. Strictly returning the active locale's
-		 * data (and not `currentTranslation`, which holds whatever was loaded
-		 * last) means no stale-language text is ever served: consumers get
-		 * undefined and can render a loader/skeleton while a switch is in flight.
+		 * The snapshot is the translation object committed for the store's current
+		 * locale. It is a plain property read, so its identity is stable until a
+		 * selected-locale load or locale commit replaces the current pointer —
+		 * exactly what useSyncExternalStore requires to avoid infinite re-render
+		 * loops. Strictly returning the current locale's committed data (and not
+		 * the raw locale cache) means no stale-language text is ever served:
+		 * consumers get undefined while a switch is in flight.
+		 * It also keeps partial results from a failed atomic transition invisible.
 		 */
-		const getSnapshot = (): M[K] | undefined => store.translations[namespace].translations[store.currentLocale]?.namespace;
+		const getSnapshot = (): M[K] | undefined => {
+			const namespaceEntry = store.translations[namespace];
+			return namespaceEntry.currentLocale === store.currentLocale
+				? (namespaceEntry.currentTranslation as M[K] | undefined)
+				: undefined;
+		};
 
 		const subscribe = (onStoreChange: () => void) => {
-			let disposed = false;
-
-			// Loads the active locale's translation and re-renders once it
+			// Loads the current locale's translation and re-renders once it
 			// settles. Failures are recorded by the store itself (`isError`);
 			// this hook simply keeps returning undefined for the failed locale,
 			// so the rejection is swallowed here instead of surfacing as an
 			// unhandled promise rejection.
 			const triggerLoad = () => {
-				store.translations[namespace]
-					.load(store.currentLocale, fromCache)
-					.catch(() => undefined)
-					.finally(() => {
-						if (!disposed) {
-							onStoreChange();
-						}
-					});
+				store.translations[namespace].load(store.currentLocale, fromCache).catch(() => undefined);
 			};
 
-			const listener = () => {
+			const localeListener: Parameters<typeof store.addChangeLocaleListener>[0] = (_locale, metadata) => {
 				// Re-render immediately — changeLocale() synchronously activates
 				// the new locale when it is already cached...
 				onStoreChange();
-				// ...and fetch it when missing (or always, when caching is off).
-				if (store.translations[namespace].translations[store.currentLocale]?.namespace === undefined || fromCache === false) {
+				// A namespace that the atomic transaction itself force-refreshed needs
+				// no second forced refresh after commit. Merely accepting a cached
+				// namespace does not satisfy this hook's `fromCache=false` contract.
+				const refreshedByAtomicChange =
+					metadata.source === 'atomic' && metadata.fromCache === false && metadata.loadedNamespaces.includes(namespace);
+				const namespaceEntry = store.translations[namespace];
+				// Synchronous changes still fetch when missing (or always, when
+				// caching is off), preserving the hook's established behaviour. A
+				// scoped atomic commit also has to activate an excluded namespace's
+				// preloaded cache when its committed pointer still belongs to the old
+				// locale.
+				if (
+					!refreshedByAtomicChange &&
+					(namespaceEntry.currentLocale !== store.currentLocale ||
+						namespaceEntry.translations[store.currentLocale]?.namespace === undefined ||
+						fromCache === false)
+				) {
 					triggerLoad();
 				}
 			};
-			store.addChangeLocaleListener(listener);
+			const unsubscribeTranslationState = store.subscribeTranslationState((event) => {
+				if (event.namespace === namespace) {
+					onStoreChange();
+				}
+			});
+			store.addChangeLocaleListener(localeListener);
 
 			// Initial load if the current locale's translation is missing.
 			// Triggering it here (subscription setup, an effect) keeps the render
 			// phase side-effect free.
-			if (getSnapshot() === undefined) {
+			if (getSnapshot() === undefined || fromCache === false) {
 				triggerLoad();
 			}
 
 			return () => {
-				disposed = true;
-				store.removeChangeLocaleListener(listener);
+				store.removeChangeLocaleListener(localeListener);
+				unsubscribeTranslationState();
 			};
 		};
 

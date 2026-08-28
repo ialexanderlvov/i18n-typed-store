@@ -4,8 +4,6 @@
 
 ### Patch Changes
 
-- Both entries (root and `/server`) re-export the new core helpers `getTranslationOrThrow` and `TranslationMissingError` — the strict variant of `getTranslation` with a clean return type that throws on a miss.
-- `./server` subpath types now resolve under legacy `moduleResolution: "node"` (`typesVersions` mapping); `parseAcceptLanguage` is a public export of the server entry.
 - Updated dependencies [fd828cc]
     - i18n-typed-store@0.5.1
 

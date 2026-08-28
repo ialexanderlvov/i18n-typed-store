@@ -10,7 +10,7 @@ React integration for [i18n-typed-store](https://github.com/ialexanderlvov/i18n-
 
 ## Features
 
-- ✅ **React Hooks** - `useI18nTranslation`, `useI18nTranslationLazy`, `useI18nLocale`
+- ✅ **React Hooks** - `useI18nTranslation`, `useI18nTranslationLazy`, `useI18nTranslationState`, `useI18nLocale`
 - ✅ **Concurrent-Safe** - All hooks read store state through `useSyncExternalStore` (no tearing, no lost updates)
 - ✅ **React Suspense Support** - Built-in support for React Suspense with lazy loading
 - ✅ **Provider Component** - `I18nTypedStoreProvider` for providing translation context
@@ -215,7 +215,12 @@ function App() {
 Provider component that wraps your application to provide translation store context.
 
 ```tsx
-<I18nTypedStoreProvider store={store} suspenseMode="first-load-locale">
+// Application-defined classification; the library assumes no bundler or transport.
+<I18nTypedStoreProvider
+	store={store}
+	suspenseMode="first-load-locale"
+	shouldThrowLoadError={({ error }) => isUnrecoverableLoadError(error)}
+>
 	{children}
 </I18nTypedStoreProvider>
 ```
@@ -226,10 +231,11 @@ Provider component that wraps your application to provide translation store cont
 - `suspenseMode` - Suspense mode for `useI18nTranslationLazy`: `'once'` | `'first-load-locale'` | `'change-locale'` (default: `'first-load-locale'`)
     - `'once'` - Suspends only until the **first** translation data is available. After that the hook never suspends again: on a locale switch it keeps returning the previous locale's translation while the new one loads in the background, then re-renders with the new data once it lands.
     - `'first-load-locale'` - Suspends on the first load of **each** locale. Once a locale has been loaded, switching back to it never suspends again.
-    - `'change-locale'` - Suspends on **every** locale change until the new locale's translation becomes active.
+    - `'change-locale'` - Suspends after a locale change while the new translation still needs loading. A cached locale is activated synchronously and therefore has nothing to suspend for.
+- `shouldThrowLoadError` - Optional boolean or predicate receiving `{ error, namespace, locale, hasPreviousTranslation, hasActiveTranslation }`. Return `true` for failures that must reach an Error Boundary even when old or cached translation data is available. The library is transport/bundler agnostic; applications classify their own fatal errors.
 - `children` - React children
 
-In every mode, if a load fails and a previously loaded translation exists, the hook degrades to that last good translation instead of suspending forever. If the **very first** load fails and there is no data at all to show, the hook throws the load error itself — catch it with an [Error Boundary](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary) (see `useI18nTranslationLazy` below).
+By default, if a load fails and a previously committed translation exists, the hook degrades to that translation instead of suspending forever; its locale can differ from the currently selected locale during a failed transition. If no data exists at all, the hook always throws: otherwise it could not uphold its non-optional return type. Rejection values are preserved by core and passed to the predicate unchanged. At the React throw boundary, a reasonless rejection becomes a diagnostic `Error`; a thenable rejection is also wrapped so React cannot mistake it for a new Suspense signal, with the exact thenable retained as `error.cause`.
 
 ### `useI18nTranslation`
 
@@ -260,7 +266,19 @@ if (translations) {
 - `namespace` - Namespace key to load translations for
 - `fromCache` - Whether to use cached translation if available (default: `true`)
 
-**Returns:** Translation object for the specified namespace, or `undefined` if not loaded
+**Returns:** The last committed translation for the selected locale, or `undefined` if none has been activated. A partially successful `changeLocaleAsync` refresh never leaks an uncommitted namespace version through this hook.
+
+### `useI18nTranslationState`
+
+Read-only reactive state for a namespace. The hook does not start a load; it reflects loads initiated through the store or another hook. Omit the second argument to follow the current store locale, or pass a locale to observe that cache slot explicitly.
+
+```tsx
+const state = useI18nTranslationState<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes, 'common'>('common');
+
+if (state.isError) console.error(state.error); // exact loader rejection value
+```
+
+It returns `{ locale, translation, isLoading, isError, error, currentTranslation, currentLocale }`. `translation` is the raw cache entry for the observed locale and can therefore reflect a successful namespace from a failed multi-namespace preload or transition. `currentTranslation` and `currentLocale` expose the last safely activated or atomically committed translation and the locale it belongs to; compare `currentLocale` with the selected locale when rendering must not show a previous-locale fallback.
 
 ### `useI18nTranslationLazy`
 
@@ -296,7 +314,8 @@ function MyComponent() {
 **Throws:**
 
 - A `Promise` while the translation is loading (caught by the nearest `<Suspense>` boundary)
-- The **load error itself** when the very first load fails and there is no translation at all to fall back to — catch it with an Error Boundary. Once any translation has been rendered, later load failures degrade to the last good translation instead of throwing.
+- The ordinary **load rejection value itself** when the very first load fails and there is no translation at all to fall back to — catch it with an Error Boundary. Reasonless and thenable rejection values are wrapped in a diagnostic `Error` as described above. Once any translation has been rendered, later load failures degrade to the last good translation instead of throwing.
+- Any later load error selected by the provider's `shouldThrowLoadError` policy, including failures during a forced refresh of cached data.
 
 ```tsx
 <ErrorBoundary fallback={<p>Failed to load translations</p>}>
@@ -317,16 +336,19 @@ const { locale, setLocale } = useI18nLocale<typeof TRANSLATIONS, typeof LOCALES,
 **Returns:**
 
 - `locale` - Current locale key
-- `setLocale` - Function to change the current locale
+- `setLocale` - Synchronously selects a configured locale key. It activates cached namespaces and lets translation hooks load missing ones.
+- `setLocaleFromTag` - Resolves an arbitrary BCP 47 string to the best configured locale, then selects it synchronously.
+- `setLocaleAsync` - Loads the requested namespaces (all by default) and atomically commits a configured locale key. It accepts core `LocaleLoadOptions<N>`, returns `LocaleChangeResult`, and rejects with `LocaleLoadError` when the authoritative request cannot load the requested namespaces.
+- `setLocaleFromTagAsync` - BCP 47 counterpart of `setLocaleAsync`.
 
 **Example:**
 
 ```tsx
 function LocaleSwitcher() {
-	const { locale, setLocale } = useI18nLocale();
+	const { locale, setLocaleFromTag } = useI18nLocale();
 
 	return (
-		<select value={locale} onChange={(e) => setLocale(e.target.value as keyof typeof LOCALES)}>
+		<select value={locale} onChange={(e) => setLocaleFromTag(e.target.value)}>
 			<option value="en">English</option>
 			<option value="ru">Русский</option>
 		</select>
@@ -350,7 +372,7 @@ Component that safely extracts strings from translation objects, catching errors
 - `errorComponent` - Component to display if an error occurs (default: empty string)
 - `errorHandler` - Optional error handler callback
 
-The extracted string is rendered as-is (no wrapper element is added). Thrown thenables (React Suspense signals) are re-thrown untouched, so `children` may safely read suspending resources — the surrounding `<Suspense>` boundary keeps working.
+The extracted string is rendered as-is (no wrapper element is added). Thrown thenables (React Suspense signals) are re-thrown untouched, so `children` may safely read suspending resources — the surrounding `<Suspense>` boundary keeps working. `errorHandler` runs in an effect after React commits the fallback, never as a render-phase side effect; Strict Mode effect replay does not report the same error twice.
 
 ## SSR/SSG Support
 
@@ -364,7 +386,7 @@ The extracted string is rendered as-is (no wrapper element is added). Thrown the
 
 ### The `/server` entry point
 
-The main `i18n-typed-store-react` bundle is emitted with a `"use client"` directive (everything it exports is a client-only React construct: context, hooks). Importing it from a React Server Component or from `getServerSideProps`-adjacent server code therefore fails or drags client-only code into the server graph.
+The main `i18n-typed-store-react` bundle is emitted with a `"use client"` directive because it contains React context, hooks, and components. SSR utilities are intentionally excluded from that client entry and exposed only through the server entry point.
 
 Server code must import the SSR utilities from the dedicated server entry point instead:
 
@@ -376,7 +398,7 @@ import { getLocaleFromRequest, initializeStore } from 'i18n-typed-store-react/se
 // import { getLocaleFromRequest } from 'i18n-typed-store-react';
 ```
 
-`i18n-typed-store-react/server` also re-exports the whole `i18n-typed-store` core (`createTranslationStore`, `getTranslation`, `getTranslationOrThrow`, `findBestLocaleMatch`, ...), so server code can create and preload stores from a single import. The root entry still re-exports the SSR utilities for backwards compatibility, but only client modules can import it.
+`i18n-typed-store-react/server` also re-exports the whole `i18n-typed-store` core (`createTranslationStore`, `getTranslation`, `getTranslationOrThrow`, `findBestLocaleMatch`, ...), so server code can create and preload stores from a single import. Server-only modules must not import the client-marked root entry.
 
 > **Tip:** the core helpers are re-exported from BOTH entries, including `getTranslationOrThrow` — the strict variant of `getTranslation` that returns a clean type (no `| Key` union) and throws `TranslationMissingError` on a miss. Handy in event handlers and server code where translations are known to be preloaded:
 >
@@ -389,7 +411,7 @@ import { getLocaleFromRequest, initializeStore } from 'i18n-typed-store-react/se
 
 ### Server rendering requires preloading
 
-`useI18nTranslation` and `useI18nTranslationLazy` trigger translation loading from their store subscription, which runs in an **effect** — and effects never run during `renderToString`/`renderToPipeableStream` or in Server Components. Server-rendered markup therefore only contains translations that were **already in the store before rendering started**. Preload them explicitly:
+Server-rendered markup should use a store whose required namespaces were loaded before rendering. `useI18nTranslation` starts loading only from its client subscription and returns `undefined` on an unprepared server store. `useI18nTranslationLazy` is different: it starts a load during the suspending read and throws that Promise. Legacy `renderToString` cannot wait for it and emits the Suspense fallback; a streaming renderer may wait and retry. Explicit preloading is deterministic for both renderers:
 
 ```typescript
 const store = storeFactory.type<TranslationData>(); // fresh per request
@@ -457,24 +479,22 @@ export default MyApp;
 // Note the import from 'i18n-typed-store-react/server': this file's exports run
 // on the server, where the client-marked root bundle must not be imported.
 import type { GetServerSidePropsContext } from 'next';
-import { getLocaleFromRequest, initializeStore } from 'i18n-typed-store-react/server';
-import { storeFactory } from '../lib/i18n';
-import type { TranslationData } from '../lib/i18n';
+import { getLocaleFromRequest } from 'i18n-typed-store-react/server';
 
 export async function getServerSideProps(context: GetServerSidePropsContext) {
-	const locale = getLocaleFromRequest(context, {
-		defaultLocale: 'en',
-		availableLocales: ['en', 'ru'],
-		cookieName: 'locale',
-		queryParamName: 'locale',
-	});
-
-	// Per-request store, created inside the handler — never at module scope.
-	const store = storeFactory.type<TranslationData>();
-	initializeStore(store, locale);
-
-	// Preload translations if you render translated text on the server
-	await store.translations.common.load(locale);
+	const locale = getLocaleFromRequest(
+		{
+			query: context.query,
+			cookies: context.req.cookies,
+			headers: context.req.headers,
+		},
+		{
+			defaultLocale: 'en',
+			availableLocales: ['en', 'ru'],
+			cookieName: 'locale',
+			queryParamName: 'locale',
+		},
+	);
 
 	return {
 		props: {
@@ -483,6 +503,8 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
 	};
 }
 ```
+
+`GetServerSidePropsContext` nests cookies and headers under `req`, so the example adapts those values to the library's framework-neutral `RequestContext`. It performs locale detection only. If translated HTML must be rendered in the Pages Router, preload the `_app` store through an application-specific, serializable hydration payload. The library intentionally does not serialize arbitrary translation classes, functions, or prototypes for you.
 
 ### Next.js App Router
 
@@ -581,15 +603,20 @@ export default async function Page() {
 
 ### SSR API
 
-Import these from `i18n-typed-store-react/server` in server code (they are also re-exported from the root for backwards-compatible client-side use).
+Import these exclusively from `i18n-typed-store-react/server`.
 
 #### `getLocaleFromRequest`
 
 Gets locale from SSR request context. Sources are checked in priority order: **query parameter → cookie → header**.
 
 ```typescript
-function getLocaleFromRequest<L extends Record<string, string>>(context: RequestContext, options: GetLocaleFromRequestOptions): keyof L;
+function getLocaleFromRequest<AvailableLocales extends readonly string[]>(
+	context: RequestContext,
+	options: GetLocaleFromRequestOptions<AvailableLocales>,
+): AvailableLocales[number];
 ```
+
+The return type is inferred directly from `availableLocales` (for example, `['en', 'ru']` produces `'en' | 'ru'`). The legacy explicit-map call `getLocaleFromRequest<typeof LOCALES>(...)` remains supported.
 
 **Parameters:**
 
@@ -608,11 +635,12 @@ function getLocaleFromRequest<L extends Record<string, string>>(context: Request
 - Matching is case-insensitive per the spec: `?locale=RU` resolves to `'ru'`
 - Values with no match (e.g. `?locale=ja-JP` with `['en', 'ru']`) fall through to the next source (cookie, then header)
 
-**Accept-Language parsing.** When `headerName` is `'accept-language'` and `parseAcceptLanguage` is enabled (default), the header is parsed per RFC 9110 and each requested language is matched with BCP 47 rules, in quality order:
+**Accept-Language parsing.** When `headerName` is `'accept-language'` and `parseAcceptLanguage` is enabled (default), the parser validates RFC-style language ranges and quality values, then combines them with the library's BCP 47 fallback matching:
 
-- Languages are sorted by their `q` values (`'en;q=0.5,ru;q=0.9'` prefers `ru`)
-- A missing or malformed `q` value (`'ru;q=garbage'`) falls back to the spec default of `1`
-- `q=0` means "not acceptable" and the language is skipped entirely
+- A missing `q` value defaults to `1`; a range with a malformed or out-of-range `q` value is ignored
+- The most specific applicable range controls each available locale, so `en-US;q=0` overrides a broader `en;q=1` for `en-US` but not for `en-GB`
+- `q=0` excludes a matching locale, while a more specific positive range can override a rejected wildcard
+- `*` considers the remaining available locales in their configured order
 - Language subtags match regional locales (`'en'` matches an available `'en-US'`), but never unrelated locales that merely share a prefix (`'fr'` does **not** match `'fris'`)
 
 **Example:**
@@ -785,13 +813,12 @@ if (translations) {
 // ❌ TypeScript error: 'invalidKey' doesn't exist
 // const invalid = translations.invalidKey;
 
-// ✅ TypeScript knows all available locales
-const { locale, setLocale } = useI18nLocale();
+// ✅ Known locale keys are suggested; arbitrary tags use an explicit API
+const { locale, setLocale, setLocaleFromTag } = useI18nLocale<typeof TRANSLATIONS, typeof LOCALES, ITranslationStoreTypes>();
 setLocale('en'); // ✅ Type-safe
 setLocale('ru'); // ✅ Type-safe
-
-// ❌ TypeScript error: 'fr' is not a valid locale
-// setLocale('fr');
+// setLocale('ru-RU'); // ❌ TypeScript error when it is not a configured key
+setLocaleFromTag('ru-RU'); // ✅ Resolves to the best configured locale (here: 'ru')
 ```
 
 ## Contributing

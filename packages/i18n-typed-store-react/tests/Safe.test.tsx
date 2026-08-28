@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
-import { Suspense } from 'react';
+import { StrictMode, Suspense } from 'react';
 import { Safe } from '../src/index';
 
 describe('Safe', () => {
@@ -30,6 +30,23 @@ describe('Safe', () => {
 
 		render(<Safe errorHandler={errorHandler}>{children}</Safe>);
 
+		expect(errorHandler).toHaveBeenCalledWith(error);
+	});
+
+	it('should report a committed error only once under StrictMode', () => {
+		const errorHandler = vi.fn();
+		const error = new Error('StrictMode error');
+		const children = () => {
+			throw error;
+		};
+
+		render(
+			<StrictMode>
+				<Safe errorHandler={errorHandler}>{children}</Safe>
+			</StrictMode>,
+		);
+
+		expect(errorHandler).toHaveBeenCalledOnce();
 		expect(errorHandler).toHaveBeenCalledWith(error);
 	});
 

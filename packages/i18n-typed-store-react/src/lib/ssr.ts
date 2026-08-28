@@ -6,15 +6,15 @@ import { findBestLocaleMatch, TranslationStore } from 'i18n-typed-store';
  * and standard request objects that provide query, cookies, and headers.
  */
 export interface RequestContext {
-	query?: Record<string, string | string[]>;
-	cookies?: Record<string, string>;
-	headers?: Record<string, string | string[]> | Headers;
+	query?: Record<string, string | string[] | undefined>;
+	cookies?: Record<string, string | undefined>;
+	headers?: Record<string, string | string[] | undefined> | Headers;
 }
 
 /**
  * Options for getting locale from SSR request.
  */
-export interface GetLocaleFromRequestOptions {
+export interface GetLocaleFromRequestOptions<AvailableLocales extends readonly string[] = readonly string[]> {
 	/**
 	 * Header name to read locale from (e.g., 'accept-language', 'x-locale')
 	 * @default 'accept-language'
@@ -31,16 +31,124 @@ export interface GetLocaleFromRequestOptions {
 	/**
 	 * Default locale to use if locale cannot be determined
 	 */
-	defaultLocale: string;
+	defaultLocale: AvailableLocales[number];
 	/**
 	 * Available locales to validate against
 	 */
-	availableLocales: readonly string[];
+	availableLocales: readonly [...AvailableLocales];
 	/**
 	 * Whether to parse Accept-Language header and find best match
 	 * @default true
 	 */
 	parseAcceptLanguage?: boolean;
+}
+
+interface LanguagePreference {
+	range: string;
+	quality: number;
+	order: number;
+	/** Core match for lookup-style fallbacks, resolved against the full locale set. */
+	fallbackLocale?: string;
+}
+
+interface LocalePreferenceMatch {
+	preference: LanguagePreference;
+	/** Direct ranges outrank locale fallbacks, which outrank a wildcard. */
+	kind: 1 | 2 | 3;
+	specificity: number;
+}
+
+const languageRangePattern = /^(?:\*|[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*)$/;
+const qualityValuePattern = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
+
+function parseLanguagePreference(value: string, order: number): LanguagePreference | null {
+	const [rawRange, ...rawParameters] = value.split(';');
+	const range = rawRange?.trim();
+
+	if (!range || !languageRangePattern.test(range)) {
+		return null;
+	}
+
+	if (rawParameters.length === 0) {
+		return { range, quality: 1, order };
+	}
+
+	// Accept-Language permits only one weight parameter. Ignoring the whole
+	// malformed range is safer than accidentally promoting it to q=1.
+	if (rawParameters.length !== 1) {
+		return null;
+	}
+
+	const qualityMatch = /^q\s*=\s*(\S+)$/i.exec(rawParameters[0]?.trim() ?? '');
+	if (!qualityMatch || !qualityValuePattern.test(qualityMatch[1] ?? '')) {
+		return null;
+	}
+
+	return {
+		range,
+		quality: Number(qualityMatch[1]),
+		order,
+	};
+}
+
+function languageRangeMatches(range: string, locale: string): boolean {
+	if (range === '*') {
+		return true;
+	}
+
+	const normalizedRange = range.toLowerCase();
+	const normalizedLocale = locale.toLowerCase();
+	return normalizedLocale === normalizedRange || normalizedLocale.startsWith(`${normalizedRange}-`);
+}
+
+function getRangeSpecificity(range: string): number {
+	return range === '*' ? 0 : range.split('-').length;
+}
+
+function getLocalePreferenceMatch(locale: string, preference: LanguagePreference): LocalePreferenceMatch | null {
+	if (preference.range === '*') {
+		return { preference, kind: 1, specificity: 0 };
+	}
+
+	const specificity = getRangeSpecificity(preference.range);
+	if (languageRangeMatches(preference.range, locale)) {
+		return { preference, kind: 3, specificity };
+	}
+
+	// The core matcher deliberately supports lookup-style fallbacks such as
+	// `en-US` -> `en`. A positive preference may use that fallback, but a q=0
+	// range must only reject locales it directly covers: rejecting `en-US`
+	// must not accidentally reject the distinct base `en` representation.
+	if (preference.quality > 0 && preference.fallbackLocale === locale) {
+		return { preference, kind: 2, specificity };
+	}
+
+	return null;
+}
+
+function getControllingPreference(locale: string, preferences: readonly LanguagePreference[]): LanguagePreference | undefined {
+	let controllingMatch: LocalePreferenceMatch | null = null;
+
+	for (const preference of preferences) {
+		const match = getLocalePreferenceMatch(locale, preference);
+		if (
+			match &&
+			(!controllingMatch ||
+				match.kind > controllingMatch.kind ||
+				(match.kind === controllingMatch.kind && match.specificity > controllingMatch.specificity) ||
+				(match.kind === controllingMatch.kind &&
+					match.specificity === controllingMatch.specificity &&
+					match.preference.quality > controllingMatch.preference.quality) ||
+				(match.kind === controllingMatch.kind &&
+					match.specificity === controllingMatch.specificity &&
+					match.preference.quality === controllingMatch.preference.quality &&
+					match.preference.order < controllingMatch.preference.order))
+		) {
+			controllingMatch = match;
+		}
+	}
+
+	return controllingMatch?.preference;
 }
 
 /**
@@ -57,46 +165,58 @@ export interface GetLocaleFromRequestOptions {
  * parseAcceptLanguage(undefined, ['en', 'ru'], 'en'); // => 'en'
  * ```
  */
-export function parseAcceptLanguage(
+export function parseAcceptLanguage<AvailableLocales extends readonly string[]>(
 	acceptLanguage: string | undefined,
-	availableLocales: readonly string[],
-	defaultLocale: string,
-): string {
+	availableLocales: readonly [...AvailableLocales],
+	defaultLocale: AvailableLocales[number],
+): AvailableLocales[number] {
 	if (!acceptLanguage) {
 		return defaultLocale;
 	}
 
-	// Parse Accept-Language header (e.g., "en-US,en;q=0.9,ru;q=0.8")
-	const languages = acceptLanguage
+	const preferences = acceptLanguage
 		.split(',')
-		.map((lang) => {
-			const [locale, q] = lang.trim().split(';');
-			// Malformed q= values (e.g. "q=abc") must not poison the sort with
-			// NaN — fall back to the spec default of 1.
-			let quality = 1;
-			if (q && q.includes('q=')) {
-				const parsedQuality = parseFloat(q.split('q=')[1]);
-				if (!Number.isNaN(parsedQuality)) {
-					quality = parsedQuality;
-				}
-			}
-			return { locale: locale.trim(), quality };
-		})
-		// q=0 explicitly means "not acceptable" (RFC 9110); empty tags are noise.
-		.filter(({ locale, quality }) => locale !== '' && quality > 0)
-		.sort((a, b) => b.quality - a.quality);
+		.map((value, order) => parseLanguagePreference(value.trim(), order))
+		.filter((preference): preference is LanguagePreference => preference !== null)
+		.map((preference) => ({
+			...preference,
+			fallbackLocale:
+				preference.range !== '*' && preference.quality > 0
+					? (findBestLocaleMatch(preference.range, [...availableLocales]) ?? undefined)
+					: undefined,
+		}));
 
-	// Match each requested language in preference order using BCP 47 subtag
-	// matching. The previous prefix comparison produced false positives —
-	// e.g. requested 'fr' matched an available 'fris' locale via startsWith.
-	for (const { locale } of languages) {
-		const match = findBestLocaleMatch(locale, availableLocales as string[]);
-		if (match) {
-			return match;
-		}
+	// Quality belongs to an available representation, not merely to the first
+	// header range after sorting. The most specific applicable range controls
+	// each locale. This also prevents a lookup fallback from bypassing q=0.
+	const rankedLocales = availableLocales
+		.map((locale, index) => ({ locale, index, preference: getControllingPreference(locale, preferences) }))
+		.filter(
+			(candidate): candidate is typeof candidate & { preference: LanguagePreference } =>
+				candidate.preference !== undefined && candidate.preference.quality > 0,
+		)
+		.sort(
+			(left, right) =>
+				right.preference.quality - left.preference.quality ||
+				left.preference.order - right.preference.order ||
+				left.index - right.index,
+		);
+
+	const bestMatch = rankedLocales[0];
+	if (bestMatch !== undefined) {
+		return bestMatch.locale;
 	}
 
-	return defaultLocale;
+	const defaultPreference = getControllingPreference(defaultLocale, preferences);
+	if (defaultPreference?.quality !== 0) {
+		return defaultLocale;
+	}
+
+	// The default locale can itself be explicitly forbidden. Keep the function
+	// total by selecting the first remaining locale; if every locale is
+	// forbidden, there is no representable acceptable result, so retain the
+	// configured default as the final server-side fallback.
+	return availableLocales.find((locale) => getControllingPreference(locale, preferences)?.quality !== 0) ?? defaultLocale;
 }
 
 /**
@@ -104,23 +224,30 @@ export function parseAcceptLanguage(
  * Checks query params, cookies, and headers in that order.
  * Works with any SSR framework that provides these standard request properties.
  *
- * @template L - Type of locales object
+ * @template AvailableLocales - Readonly tuple or array of available locale names
  * @param context - SSR request context with query, cookies, and headers
  * @param options - Options for locale detection
- * @returns Detected locale key
+ * @returns Detected locale as an exact member of `availableLocales`
  *
  * @example
  * ```ts
- * // Next.js example
+ * // Next.js Pages Router example
  * import type { GetServerSidePropsContext } from 'next';
  *
  * export async function getServerSideProps(context: GetServerSidePropsContext) {
- *   const locale = getLocaleFromRequest(context, {
- *     defaultLocale: 'en',
- *     availableLocales: ['en', 'ru'],
- *     cookieName: 'locale',
- *     queryParamName: 'locale',
- *   });
+ *   const locale = getLocaleFromRequest(
+ *     {
+ *       query: context.query,
+ *       cookies: context.req.cookies,
+ *       headers: context.req.headers,
+ *     },
+ *     {
+ *       defaultLocale: 'en',
+ *       availableLocales: ['en', 'ru'],
+ *       cookieName: 'locale',
+ *       queryParamName: 'locale',
+ *     },
+ *   );
  *
  *   const store = storeFactory.type<MyTranslations>();
  *   initializeStore(store, locale);
@@ -148,10 +275,19 @@ export function parseAcceptLanguage(
  * }
  * ```
  */
-export function getLocaleFromRequest<L extends Record<string, string>>(
+export function getLocaleFromRequest<AvailableLocales extends readonly string[]>(
 	context: RequestContext,
-	options: GetLocaleFromRequestOptions,
-): keyof L {
+	options: GetLocaleFromRequestOptions<AvailableLocales>,
+): AvailableLocales[number];
+/**
+ * Backwards-compatible overload for callers that explicitly provide a locale
+ * map type, as supported by versions before tuple inference was introduced.
+ */
+export function getLocaleFromRequest<L extends Record<string, string> = never>(
+	context: RequestContext,
+	options: [L] extends [never] ? never : GetLocaleFromRequestOptions,
+): keyof L;
+export function getLocaleFromRequest(context: RequestContext, options: GetLocaleFromRequestOptions): string {
 	const {
 		queryParamName = 'locale',
 		cookieName,
@@ -163,12 +299,13 @@ export function getLocaleFromRequest<L extends Record<string, string>>(
 
 	// 1. Check query parameter. BCP 47 matching (instead of a strict includes)
 	// lets '?locale=ru-RU' resolve to an available 'ru' locale.
-	if (queryParamName && context.query?.[queryParamName]) {
-		const queryLocale = Array.isArray(context.query[queryParamName]) ? context.query[queryParamName][0] : context.query[queryParamName];
+	if (queryParamName) {
+		const queryValue = context.query?.[queryParamName];
+		const queryLocale = Array.isArray(queryValue) ? queryValue[0] : queryValue;
 		if (typeof queryLocale === 'string' && queryLocale) {
 			const matchedLocale = findBestLocaleMatch(queryLocale, availableLocales as string[]);
 			if (matchedLocale) {
-				return matchedLocale as keyof L;
+				return matchedLocale;
 			}
 		}
 	}
@@ -179,7 +316,7 @@ export function getLocaleFromRequest<L extends Record<string, string>>(
 		if (typeof cookieLocale === 'string' && cookieLocale) {
 			const matchedLocale = findBestLocaleMatch(cookieLocale, availableLocales as string[]);
 			if (matchedLocale) {
-				return matchedLocale as keyof L;
+				return matchedLocale;
 			}
 		}
 	}
@@ -191,22 +328,26 @@ export function getLocaleFromRequest<L extends Record<string, string>>(
 		if (context.headers instanceof Headers) {
 			headerValue = context.headers.get(headerName) || undefined;
 		} else {
-			const header = context.headers[headerName];
-			headerValue = Array.isArray(header) ? header[0] : header;
+			const normalizedHeaderName = headerName.toLowerCase();
+			const headerKey = Object.keys(context.headers).find((key) => key.toLowerCase() === normalizedHeaderName);
+			const header = headerKey === undefined ? undefined : context.headers[headerKey];
+			// Multiple Accept-Language field lines are equivalent to one
+			// comma-separated field value. Custom headers remain single-valued and
+			// preserve the established first-value behaviour.
+			headerValue = Array.isArray(header) ? (normalizedHeaderName === 'accept-language' ? header.join(',') : header[0]) : header;
 		}
 
 		// For Accept-Language, always call parseAcceptLanguage (even if headerValue is empty/undefined)
 		if (headerName.toLowerCase() === 'accept-language' && shouldParseAcceptLanguage) {
-			const parsedLocale = parseAcceptLanguage(headerValue, availableLocales, defaultLocale);
-			return parsedLocale as keyof L;
+			return parseAcceptLanguage(headerValue, availableLocales, defaultLocale);
 		}
 
 		if (headerValue && availableLocales.includes(headerValue)) {
-			return headerValue as keyof L;
+			return headerValue;
 		}
 	}
 
-	return defaultLocale as keyof L;
+	return defaultLocale;
 }
 
 /**
@@ -241,7 +382,7 @@ export function getLocaleFromRequest<L extends Record<string, string>>(
  * initializeStore(store, locale);
  *
  * // Preload translations if needed
- * await store.common.load(locale);
+ * await store.translations.common.load(locale);
  * ```
  */
 export function initializeStore<N extends Record<string, string>, L extends Record<string, string>, M extends { [K in keyof N]: any }>(
