@@ -6,6 +6,9 @@ import { I18N_SERVICE, I18N_OPTIONS } from './tokens';
 import { I18nModuleOptions } from '../types/types';
 import { i18nRequestStorage } from './request-context';
 
+type AnyI18nService = I18nService<any, any, any>;
+type AnyI18nModuleOptions = I18nModuleOptions<any, any, any>;
+
 // Types for Express (if installed)
 type ExpressRequest = {
 	headers: Record<string, string | string[] | undefined>;
@@ -34,9 +37,9 @@ type ExpressNextFunction = () => void;
 export class I18nMiddleware implements NestMiddleware {
 	constructor(
 		@Inject(I18N_SERVICE)
-		private readonly i18nService: I18nService,
+		private readonly i18nService: AnyI18nService,
 		@Inject(I18N_OPTIONS)
-		private readonly options: I18nModuleOptions,
+		private readonly options: AnyI18nModuleOptions,
 	) {}
 
 	use(req: ExpressRequest, _: ExpressResponse, next: ExpressNextFunction) {

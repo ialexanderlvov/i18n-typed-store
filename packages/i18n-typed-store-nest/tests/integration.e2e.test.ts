@@ -13,12 +13,10 @@ import { I18nModule, I18nService, I18N_SERVICE, Translation } from '../src';
  * actual HTTP server listens on an ephemeral port and is exercised with
  * concurrent fetch() calls.
  *
- * Primary regression: the per-request locale race. The core store keeps ONE
- * shared `currentTranslation` slot per namespace which every `load()` of any
- * request overwrites. `I18nService.getCurrentTranslation` used to read that
- * shared slot, so two concurrent requests with different locales could serve
- * each other's translations. It now reads the per-locale cache slot via the
- * AsyncLocalStorage-bound request locale.
+ * Primary regression: per-request locale isolation. The store has one
+ * store-selected `currentTranslation` pointer per namespace, while concurrent
+ * requests can use different AsyncLocalStorage-bound locales. The service must
+ * therefore read each request's per-locale cache slot instead of that pointer.
  */
 
 const namespaces = { common: 'common', broken: 'broken' } as const;
@@ -37,9 +35,8 @@ const createTestStore = () => {
 		namespaces,
 		locales,
 		loadModule: async (locale, namespace) => {
-			// Artificial delay guarantees that concurrent requests' loads
-			// overlap in time, so the shared `currentTranslation` slot is
-			// overwritten by whichever load lands last.
+			// Artificial delay guarantees that the two request-scoped locale loads
+			// overlap instead of being accidentally serialized by the test.
 			await new Promise((resolve) => setTimeout(resolve, LOAD_DELAY_MS));
 			if (namespace === 'broken') {
 				throw new Error('broken namespace never loads');
@@ -62,10 +59,8 @@ class GreetingController {
 	@Get('greeting')
 	async greeting() {
 		await this.i18n.loadTranslation('common');
-		// Extra pause AFTER our own load: gives the concurrent request's load
-		// time to land on the shared `currentTranslation` slot. Reading the
-		// shared slot here (the old bug) would now return the OTHER request's
-		// locale; the per-request read must still return ours.
+		// Extra pause after our own load ensures both request contexts remain
+		// interleaved before the request-scoped cache read.
 		await new Promise((resolve) => setTimeout(resolve, LOAD_DELAY_MS));
 		const translation = this.i18n.getCurrentTranslation('common');
 		return { locale: String(this.i18n.getLocale()), greeting: translation?.greeting };
@@ -103,12 +98,11 @@ describe('I18nModule end-to-end (real Nest app over HTTP)', () => {
 		app = undefined;
 	});
 
-	it('serves each of two concurrent requests its OWN locale (shared-slot race regression)', async () => {
+	it('serves each concurrent request from its own locale cache slot', async () => {
 		const baseUrl = await bootstrap();
 
-		// Fire both requests concurrently; loads (50ms each) fully overlap and
-		// each handler re-reads only after BOTH loads have completed, so the
-		// shared slot definitely holds a single winner by read time.
+		// Fire both requests concurrently; loads overlap and each handler reads
+		// only after both request contexts have had time to interleave.
 		const [enResponse, ruResponse] = await Promise.all([
 			fetch(`${baseUrl}/greeting?locale=en`).then((res) => res.json()),
 			fetch(`${baseUrl}/greeting?locale=ru`).then((res) => res.json()),

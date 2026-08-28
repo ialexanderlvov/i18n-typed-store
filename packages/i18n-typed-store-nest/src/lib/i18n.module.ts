@@ -5,6 +5,9 @@ import { I18nInterceptor } from './i18n.interceptor';
 import { I18N_STORE, I18N_OPTIONS, I18N_SERVICE } from './tokens';
 import { I18nModuleOptions, I18nModuleAsyncOptions } from '../types/types';
 
+type AnyI18nService = I18nService<any, any, any>;
+type AnyI18nModuleOptions = I18nModuleOptions<any, any, any>;
+
 /**
  * Internationalization module for NestJS
  *
@@ -135,7 +138,7 @@ export class I18nModule implements OnModuleInit {
 	): DynamicModule {
 		const storeProvider: Provider = {
 			provide: I18N_STORE,
-			useFactory: (options: I18nModuleOptions) => options.store,
+			useFactory: (options: AnyI18nModuleOptions) => options.store,
 			inject: [I18N_OPTIONS],
 		};
 
@@ -168,9 +171,9 @@ export class I18nModule implements OnModuleInit {
 
 	constructor(
 		@Inject(I18N_SERVICE)
-		private readonly i18nService: I18nService,
+		private readonly i18nService: AnyI18nService,
 		@Inject(I18N_OPTIONS)
-		private readonly options: I18nModuleOptions,
+		private readonly options: AnyI18nModuleOptions,
 	) {}
 
 	async onModuleInit() {

@@ -373,7 +373,7 @@ Strict variant of `getTranslationByKey`: returns the value with a **clean type**
 const message = this.i18nService.getTranslationByKeyOrThrow('common.message');
 message.title; // ✅ object access without narrowing
 
-// Requires i18n-typed-store >= 0.5.1
+// Requires i18n-typed-store >= 0.6.0
 ```
 
 #### `getStore(): TranslationStore<N, L, M>`

@@ -1,10 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { createTranslationStore } from 'i18n-typed-store';
-import { I18nModuleOptions, I18nService, runWithRequestLocale, getRequestLocale, setRequestLocale } from '../src';
+import {
+	I18nModuleOptions as GenericI18nModuleOptions,
+	I18nService,
+	runWithRequestLocale,
+	getRequestLocale,
+	setRequestLocale,
+} from '../src';
 
 describe('per-request locale context', () => {
 	const namespaces = { common: 'common' } as const;
 	const locales = { en: 'en', ru: 'ru' } as const;
+	type TestTranslations = { common: { greeting: string } };
+	type I18nModuleOptions = GenericI18nModuleOptions<typeof namespaces, typeof locales, TestTranslations>;
 
 	const createService = () => {
 		const storeFactory = createTranslationStore({
@@ -18,7 +26,7 @@ describe('per-request locale context', () => {
 			extractTranslation: (m) => m,
 			defaultLocale: 'en',
 		});
-		const store = storeFactory.type<{ common: { greeting: string } }>();
+		const store = storeFactory.type<TestTranslations>();
 		return new I18nService(store, { store } as I18nModuleOptions);
 	};
 

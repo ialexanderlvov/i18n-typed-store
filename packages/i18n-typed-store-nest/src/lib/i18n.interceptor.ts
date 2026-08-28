@@ -7,13 +7,16 @@ import { I18N_SERVICE, I18N_OPTIONS } from './tokens';
 import { I18nModuleOptions } from '../types/types';
 import { i18nRequestStorage, I18nRequestState } from './request-context';
 
+type AnyI18nService = I18nService<any, any, any>;
+type AnyI18nModuleOptions = I18nModuleOptions<any, any, any>;
+
 declare module 'express' {
 	// Augment express.Request with the property attached by the middleware /
 	// interceptor. It is OPTIONAL: it only exists once one of them has run, and
 	// declaring it non-optional would falsely promise every consumer that
 	// `req.i18nService` is always present (e.g. inside guards that run first).
 	interface Request {
-		i18nService?: I18nService;
+		i18nService?: AnyI18nService;
 	}
 }
 
@@ -40,9 +43,9 @@ declare module 'express' {
 export class I18nInterceptor implements NestInterceptor {
 	constructor(
 		@Inject(I18N_SERVICE)
-		private readonly i18nService: I18nService,
+		private readonly i18nService: AnyI18nService,
 		@Inject(I18N_OPTIONS)
-		private readonly options: I18nModuleOptions,
+		private readonly options: AnyI18nModuleOptions,
 	) {}
 
 	intercept(context: ExecutionContext, next: CallHandler): Observable<any> {

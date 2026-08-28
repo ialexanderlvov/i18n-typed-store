@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { I18nMiddleware, I18nModuleOptions, I18nService, getRequestLocale } from '../src';
+import { I18nMiddleware, I18nModuleOptions as GenericI18nModuleOptions, I18nService, getRequestLocale } from '../src';
 import { createTranslationStore } from 'i18n-typed-store';
 
 describe('I18nMiddleware', () => {
 	const namespaces = { common: 'common' } as const;
 	const locales = { en: 'en', ru: 'ru' } as const;
+	type TestTranslations = { common: any };
+	type I18nModuleOptions = GenericI18nModuleOptions<typeof namespaces, typeof locales, TestTranslations>;
+	type TestI18nService = I18nService<typeof namespaces, typeof locales, TestTranslations>;
 
 	const createTestMiddleware = (options?: Partial<I18nModuleOptions>) => {
 		const storeFactory = createTranslationStore({
@@ -43,7 +46,7 @@ describe('I18nMiddleware', () => {
 	 * and captures `service.getLocale()` from within that scope, since the
 	 * locale is now request-scoped (not a singleton mutation).
 	 */
-	const captureLocaleInScope = (middleware: I18nMiddleware, service: I18nService, req: any) => {
+	const captureLocaleInScope = (middleware: I18nMiddleware, service: TestI18nService, req: any) => {
 		let captured: string | undefined;
 		let requestLocale: string | undefined;
 		let nextCalled = false;

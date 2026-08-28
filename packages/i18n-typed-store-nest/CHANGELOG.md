@@ -1,12 +1,5 @@
 # i18n-typed-store-nest
 
-## 0.5.1
-
-### Patch Changes
-
-- Added `I18nService.getTranslationByKeyOrThrow(key, locale?)` — strict variant of `getTranslationByKey` that returns the translation value with a clean type (no `| Key` union) and throws `TranslationMissingError` (from `i18n-typed-store`) when the key cannot be resolved. Object values can be used directly without `typeof` narrowing.
-- The `i18n-typed-store` peer range is now `>=0.5.1` (the new method requires the core `getTranslationOrThrow` export).
-
 ## 0.5.0
 
 ### Minor Changes

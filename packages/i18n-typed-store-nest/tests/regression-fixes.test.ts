@@ -4,7 +4,7 @@ import { defer, of } from 'rxjs';
 import { createTranslationStore } from 'i18n-typed-store';
 import {
 	I18nModule,
-	I18nModuleOptions,
+	I18nModuleOptions as GenericI18nModuleOptions,
 	I18nService,
 	I18nInterceptor,
 	I18N_OPTIONS,
@@ -26,6 +26,7 @@ describe('audit regression fixes (nest)', () => {
 	const locales = { en: 'en', ru: 'ru' } as const;
 
 	type TestTranslations = { common: { greeting: string } };
+	type I18nModuleOptions = GenericI18nModuleOptions<any, any, any>;
 
 	const createTestService = () => {
 		const storeFactory = createTranslationStore({

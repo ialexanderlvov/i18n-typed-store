@@ -2,11 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExecutionContext, CallHandler } from '@nestjs/common';
 import { defer, of } from 'rxjs';
 import { createTranslationStore } from 'i18n-typed-store';
-import { I18nModuleOptions, I18nService, I18nInterceptor, getRequestLocale } from '../src';
+import { I18nModuleOptions as GenericI18nModuleOptions, I18nService, I18nInterceptor, getRequestLocale } from '../src';
 
 describe('I18nInterceptor', () => {
 	const namespaces = { common: 'common' } as const;
 	const locales = { en: 'en', ru: 'ru' } as const;
+	type TestTranslations = { common: any };
+	type I18nModuleOptions = GenericI18nModuleOptions<typeof namespaces, typeof locales, TestTranslations>;
+	type TestI18nService = I18nService<typeof namespaces, typeof locales, TestTranslations>;
 
 	const createTestInterceptor = (options?: Partial<I18nModuleOptions>) => {
 		const storeFactory = createTranslationStore({
@@ -51,7 +54,7 @@ describe('I18nInterceptor', () => {
 	 * Returns a CallHandler whose `handle()` lazily reads the locale from the
 	 * current ALS scope, mimicking what a controller would do.
 	 */
-	const createCapturingHandler = (capture: { locale?: string; requestLocale?: string }, service: I18nService): CallHandler => ({
+	const createCapturingHandler = (capture: { locale?: string; requestLocale?: string }, service: TestI18nService): CallHandler => ({
 		handle: () =>
 			defer(() => {
 				capture.locale = String(service.getLocale());

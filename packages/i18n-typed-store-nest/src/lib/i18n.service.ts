@@ -20,12 +20,12 @@ import { getRequestLocale, i18nRequestStorage, setRequestLocale } from './reques
  *     (set by `I18nMiddleware` / `I18nInterceptor`).
  *  3. The default locale on the underlying store.
  *
- * Concurrency note: the underlying store keeps ONE shared
- * `currentTranslation` slot per namespace, overwritten by every `load()` from
- * any request. This service therefore NEVER reads shared slots when serving a
- * request — every read goes through the per-request locale straight into the
- * per-locale cache (`translations[namespace].translations[locale]`), which is
- * append-only and safe under concurrent traffic.
+ * Concurrency note: the underlying store keeps ONE selected-locale
+ * `currentTranslation` slot per namespace. This service therefore never uses
+ * that shared pointer when serving a request — every read goes through the
+ * per-request locale straight into the per-locale cache
+ * (`translations[namespace].translations[locale]`), which is safe under
+ * concurrent traffic.
  *
  * @template N - Type of namespaces object
  * @template L - Type of locales object
@@ -163,9 +163,9 @@ export class I18nService<
 	/**
 	 * Gets translation for the specified namespace, loading it when needed.
 	 *
-	 * Reads the per-locale cache slot directly (NOT the store's shared
-	 * `currentTranslation`, which any concurrent request's `load()` may have
-	 * pointed at another locale in the meantime).
+	 * Reads the per-locale cache slot directly, not the store-wide
+	 * `currentTranslation` pointer, because a request locale can differ from the
+	 * locale selected on the shared store.
 	 *
 	 * @param namespace - Namespace key
 	 * @param locale - Locale (optional, uses the resolved current locale)
@@ -192,10 +192,9 @@ export class I18nService<
 	 * default outside of one. Does not trigger loading.
 	 *
 	 * Implementation note: this intentionally does NOT read
-	 * `store.translations[namespace].currentTranslation`. That slot is global
-	 * shared state overwritten by every `load()` of every concurrent request —
-	 * reading it here would return another request's locale under parallel
-	 * traffic. The per-locale cache slot is race-free.
+	 * `store.translations[namespace].currentTranslation`. That slot follows the
+	 * store-wide selected locale, while a request may have a different locale.
+	 * The per-locale cache slot is the authoritative request-scoped read.
 	 *
 	 * @param namespace - Namespace key
 	 * @returns Translation object or undefined if not loaded for the current locale

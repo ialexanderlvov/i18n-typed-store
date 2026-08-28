@@ -5,7 +5,7 @@ import { defer, of } from 'rxjs';
 import { createTranslationStore } from 'i18n-typed-store';
 import {
 	I18nModule,
-	I18nModuleOptions,
+	I18nModuleOptions as GenericI18nModuleOptions,
 	I18nService,
 	I18nInterceptor,
 	I18nMiddleware,
@@ -32,6 +32,7 @@ describe('production fixes (nest)', () => {
 	const locales = { en: 'en', ru: 'ru' } as const;
 
 	type TestTranslations = { common: { greeting: string } };
+	type I18nModuleOptions = GenericI18nModuleOptions<any, any, any>;
 
 	const createStore = (loadDelayMs = 0) => {
 		const storeFactory = createTranslationStore({
@@ -82,15 +83,17 @@ describe('production fixes (nest)', () => {
 	});
 
 	describe('fix 1: getCurrentTranslation is per-request (no shared currentTranslation reads)', () => {
-		it('returns the translation of the request locale even after another load overwrote the shared slot', async () => {
+		it('returns each request locale while the shared pointer follows the store-selected locale', async () => {
 			const store = createStore();
 			const service = createService(store);
 			await service.loadTranslation('common', 'en');
 			await service.loadTranslation('common', 'ru');
-			// The last load pointed the SHARED slot at 'ru'.
-			expect(store.translations.common.currentTranslation).toEqual({ greeting: 'Привет' });
+			// Loading an off-selected locale warms its raw cache without replacing
+			// the store-wide pointer, which still belongs to the selected `en` locale.
+			expect(store.translations.common.currentTranslation).toEqual({ greeting: 'Hello' });
+			expect(store.translations.common.translations.ru.namespace).toEqual({ greeting: 'Привет' });
 
-			// An 'en' request must still see 'en'.
+			// Request-scoped reads use those per-locale cache slots, not the pointer.
 			runWithRequestLocale('en', () => {
 				expect(service.getCurrentTranslation('common')).toEqual({ greeting: 'Hello' });
 			});

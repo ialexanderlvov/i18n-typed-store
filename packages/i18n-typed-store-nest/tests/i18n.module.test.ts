@@ -1,10 +1,19 @@
 import { createTranslationStore } from 'i18n-typed-store';
+import type { ClassProvider, Provider, ValueProvider } from '@nestjs/common';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { I18nModuleOptions, I18nModule, I18N_STORE, I18N_OPTIONS, I18N_SERVICE, I18nService } from '../src';
+import { I18nModuleOptions as GenericI18nModuleOptions, I18nModule, I18N_STORE, I18N_OPTIONS, I18N_SERVICE, I18nService } from '../src';
+
+const isValueProvider = (provider: Provider): provider is ValueProvider =>
+	typeof provider === 'object' && provider !== null && 'useValue' in provider;
+
+const isClassProvider = (provider: Provider): provider is ClassProvider =>
+	typeof provider === 'object' && provider !== null && 'useClass' in provider;
 
 describe('I18nModule', () => {
 	const namespaces = { common: 'common', errors: 'errors' } as const;
 	const locales = { en: 'en', ru: 'ru' } as const;
+	type TestTranslations = { common: { greeting: string }; errors: { notFound: string } };
+	type I18nModuleOptions = GenericI18nModuleOptions<typeof namespaces, typeof locales, TestTranslations>;
 
 	const createTestStore = () => {
 		const storeFactory = createTranslationStore({
@@ -25,7 +34,7 @@ describe('I18nModule', () => {
 			defaultLocale: 'en',
 		});
 
-		return storeFactory.type<{ common: { greeting: string }; errors: { notFound: string } }>();
+		return storeFactory.type<TestTranslations>();
 	};
 
 	beforeEach(() => {
@@ -76,7 +85,9 @@ describe('I18nModule', () => {
 			};
 
 			const module = I18nModule.forRoot(options);
-			const optionsProvider = module.providers?.find((p: any) => p.provide === I18N_OPTIONS);
+			const optionsProvider = module.providers?.find(
+				(provider): provider is ValueProvider => isValueProvider(provider) && provider.provide === I18N_OPTIONS,
+			);
 
 			expect(optionsProvider).toBeDefined();
 			expect(optionsProvider?.useValue).toBeDefined();
@@ -92,7 +103,9 @@ describe('I18nModule', () => {
 			};
 
 			const module = I18nModule.forRoot(options);
-			const serviceProvider = module.providers?.find((p: any) => p.provide === I18N_SERVICE);
+			const serviceProvider = module.providers?.find(
+				(provider): provider is ClassProvider => isClassProvider(provider) && provider.provide === I18N_SERVICE,
+			);
 
 			expect(serviceProvider).toBeDefined();
 			expect(serviceProvider?.useClass).toBe(I18nService);
@@ -121,7 +134,9 @@ describe('I18nModule', () => {
 			};
 
 			const module = I18nModule.forRoot(options);
-			const optionsProvider = module.providers?.find((p: any) => p.provide === I18N_OPTIONS);
+			const optionsProvider = module.providers?.find(
+				(provider): provider is ValueProvider => isValueProvider(provider) && provider.provide === I18N_OPTIONS,
+			);
 
 			expect(optionsProvider?.useValue.preload).toBe(false);
 		});
@@ -134,7 +149,9 @@ describe('I18nModule', () => {
 			};
 
 			const module = I18nModule.forRoot(options);
-			const optionsProvider = module.providers?.find((p: any) => p.provide === I18N_OPTIONS);
+			const optionsProvider = module.providers?.find(
+				(provider): provider is ValueProvider => isValueProvider(provider) && provider.provide === I18N_OPTIONS,
+			);
 
 			expect(optionsProvider?.useValue.availableLocales).toEqual(['en', 'ru']);
 		});
@@ -148,7 +165,7 @@ describe('I18nModule', () => {
 				defaultLocale: 'ru',
 			};
 
-			const module = I18nModule.forRoot(options);
+			I18nModule.forRoot(options);
 			const i18nModule = new I18nModule(new I18nService(store, options), options);
 
 			await i18nModule.onModuleInit();
